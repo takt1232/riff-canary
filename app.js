@@ -333,6 +333,125 @@ document.addEventListener('DOMContentLoaded', async () => {
     startTimer(remaining);
   }
 
+  // "Downloaded" badges: only files in the Downloads folder count, not the internal offline cache. Status is
+  // looked up in batches for the badges currently on screen, then cached for a short while.
+  const downloadedBadgeCache = new Map();
+  const downloadedBadgePending = new Map();
+  let downloadedBadgeTimer = null;
+  let downloadedBadgeNeedsRefresh = false;
+  const DOWNLOADED_BADGE_TTL = 60 * 1000;
+  const NOT_DOWNLOADED_BADGE_TTL = 20 * 1000;
+
+  function downloadedTrackKey(track) {
+    if (!track || track.platform === 'local') return '';
+    const title = String(track.title || '').trim().toLowerCase();
+    const artist = String(track.artist || '').trim().toLowerCase();
+    if (!title && !artist) return '';
+    return `${artist}\u0000${title}`;
+  }
+
+  function setDownloadedBadge(badge, downloaded) {
+    if (!badge) return;
+    badge.classList.toggle('hidden', !downloaded);
+    if (downloaded) {
+      badge.setAttribute('aria-label', T('Downloaded'));
+      badge.setAttribute('title', T('Downloaded'));
+    } else {
+      badge.removeAttribute('aria-label');
+      badge.removeAttribute('title');
+    }
+  }
+
+  function applyDownloadedBadgeState(key, downloaded) {
+    document.querySelectorAll('.track-downloaded-badge[data-download-key]').forEach((badge) => {
+      if (badge.dataset.downloadKey === key) setDownloadedBadge(badge, downloaded);
+    });
+  }
+
+  function queueDownloadedStatus(key, track) {
+    if (!key || downloadedBadgePending.has(key)) return;
+    const cached = downloadedBadgeCache.get(key);
+    if (cached && cached.expires > Date.now()) return;
+    downloadedBadgePending.set(key, {
+      key,
+      title: String(track.title || ''),
+      artist: String(track.artist || ''),
+    });
+    if (downloadedBadgeTimer) return;
+    downloadedBadgeTimer = setTimeout(flushDownloadedStatusQueue, 60);
+  }
+
+  async function flushDownloadedStatusQueue() {
+    downloadedBadgeTimer = null;
+    const entries = [...downloadedBadgePending.values()].slice(0, 500);
+    if (!entries.length) return;
+    for (const entry of entries) downloadedBadgePending.delete(entry.key);
+    try {
+      const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/downloaded-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filesOnly: true, refresh: downloadedBadgeNeedsRefresh, tracks: entries.map((e) => ({ title: e.title, artist: e.artist })) }),
+      });
+      const data = await res.json();
+      if (!data || !data.success || !Array.isArray(data.downloaded)) throw new Error('downloaded-status failed');
+      downloadedBadgeNeedsRefresh = false;
+      const now = Date.now();
+      entries.forEach((entry, i) => {
+        const downloaded = !!data.downloaded[i];
+        downloadedBadgeCache.set(entry.key, {
+          downloaded,
+          expires: now + (downloaded ? DOWNLOADED_BADGE_TTL : NOT_DOWNLOADED_BADGE_TTL),
+        });
+        applyDownloadedBadgeState(entry.key, downloaded);
+      });
+    } catch (_) {
+      // don't keep asking on every render if the server is briefly unavailable
+      const now = Date.now();
+      for (const entry of entries) downloadedBadgeCache.set(entry.key, { downloaded: false, expires: now + 15000 });
+    }
+  }
+
+  function refreshTrackDownloadedBadge(badge, track) {
+    if (!badge) return;
+    const key = downloadedTrackKey(track);
+    badge.dataset.downloadKey = key;
+    badge.dataset.downloadTitle = track ? String(track.title || '') : '';
+    badge.dataset.downloadArtist = track ? String(track.artist || '') : '';
+    if (!key) {
+      setDownloadedBadge(badge, false);
+      return;
+    }
+    const cached = downloadedBadgeCache.get(key);
+    if (cached && cached.expires > Date.now()) {
+      setDownloadedBadge(badge, cached.downloaded);
+      return;
+    }
+    setDownloadedBadge(badge, false);
+    queueDownloadedStatus(key, track);
+  }
+
+  function markTrackDownloaded(track) {
+    const key = downloadedTrackKey(track);
+    if (!key) return;
+    downloadedBadgeCache.set(key, { downloaded: true, expires: Date.now() + DOWNLOADED_BADGE_TTL });
+    applyDownloadedBadgeState(key, true);
+  }
+
+  function invalidateDownloadedBadges() {
+    downloadedBadgeCache.clear();
+    downloadedBadgePending.clear();
+    downloadedBadgeNeedsRefresh = true;
+    if (downloadedBadgeTimer) {
+      clearTimeout(downloadedBadgeTimer);
+      downloadedBadgeTimer = null;
+    }
+    document.querySelectorAll('.track-downloaded-badge[data-download-key]').forEach((badge) => {
+      const title = badge.dataset.downloadTitle || '';
+      const artist = badge.dataset.downloadArtist || '';
+      refreshTrackDownloadedBadge(badge, { title, artist });
+    });
+  }
+
   if (localStorage.getItem('canary_scale_rebased_v2') !== '1') {
     localStorage.setItem('canary_scale_rebased_v2', '1');
     if (localStorage.getItem('devsize_ui_scale') === '90') {
@@ -1707,6 +1826,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                           rightPanelCover: document.getElementById('right-panel-cover'),
                           rightPanelFallback: document.getElementById('right-panel-fallback'),
                           rightPanelTitle: document.getElementById('right-panel-title'),
+                          rightPanelDownloaded: document.getElementById('right-panel-downloaded'),
                           rightPanelArtist: document.getElementById('right-panel-artist'),
                           lyricsStatus: document.getElementById('lyrics-status'),
                           lyricsContainer: document.getElementById('lyrics-container'),
@@ -1733,6 +1853,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                           playbarArtwork: document.getElementById('playbar-artwork'),
                           artworkFallback: document.getElementById('artwork-fallback'),
                           playbarTitle: document.getElementById('playbar-title'),
+                          playbarDownloaded: document.getElementById('playbar-downloaded'),
                           playbarArtist: document.getElementById('playbar-artist'),
                           btnToggleFav: document.getElementById('btn-toggle-fav'),
                           favIcon: document.getElementById('fav-icon'),
@@ -3319,6 +3440,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (el.rightPanelTitle) el.rightPanelTitle.textContent = track.title || 'Untitled';
     if (el.rightPanelArtist) el.rightPanelArtist.textContent = track.artist || 'Unknown artist';
+    refreshTrackDownloadedBadge(el.playbarDownloaded, track);
+    refreshTrackDownloadedBadge(el.rightPanelDownloaded, track);
 
     if (el.btnPlaybarMore) el.btnPlaybarMore.style.display = track.platform === 'local' ? 'none' : '';
     if (el.timeDuration && track && track.duration) el.timeDuration.textContent = formatDuration(track.duration);
@@ -8103,7 +8226,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       <span class="track-row-index">${(isAlbum && track.no) ? track.no : (idx + 1)}</span>
       ${!isAlbum ? `<img class="track-row-thumb" src="${escapeHtml(listThumb(rowThumb) || '')}" data-full="${escapeHtml(rowThumb || '')}" data-saved="${escapeHtml(track.thumbnail || '')}" data-art="${escapeHtml(JSON.stringify(trackArtCandidates(track)))}" alt="" loading="lazy" decoding="async" onerror="${THUMB_FALLBACK}">` : ''}
       <div class="track-row-info">
+      <div class="track-row-title-line">
       <span class="track-row-title">${escapeHtml(track.title || 'untitled')}</span>
+      <span class="track-downloaded-badge track-row-downloaded hidden" title="Downloaded" aria-label="Downloaded">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="8 12.5 11 15.5 16 9"></polyline></svg>
+      </span>
+      </div>
       ${explicitTag ? `<span class="track-row-artist-wrap">${explicitTag}${artistSpan}</span>` : artistSpan}
       </div>
       <span class="track-row-duration">${formatDuration(track.duration)}</span>
@@ -8130,6 +8258,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         </button>` : ''}
         </div>
         `;
+
+        refreshTrackDownloadedBadge(row.querySelector('.track-row-downloaded'), track);
 
         if (multiSel.active && multiSel.context === context) {
           const chk = document.createElement('span');
@@ -14090,7 +14220,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const openModals = Array.from(document.querySelectorAll('.modal-backdrop:not(.hidden)'));
       if (openModals.length > 0) {
         e.preventDefault();
-        closeModal(openModals[openModals.length - 1]);
+        const topModal = openModals[openModals.length - 1];
+        if (topModal && topModal.id === 'download-modal' && typeof isDownloadJobActive === 'function' && isDownloadJobActive()) {
+          requestDownloadModalClose();
+          return;
+        }
+        closeModal(topModal);
         return;
       }
       const tvkPanel = document.getElementById('tvk-panel');
@@ -16187,6 +16322,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function openDownloadModal(track) {
     if (!track || !el.downloadModal) return;
+    if (isDownloadJobActive()) {
+      openDownloadModalForActiveJob();
+      return;
+    }
     trackToDownload = track;
     downloadBatch = null;
     el.downloadModal.classList.remove('batch-mode');
@@ -16194,6 +16333,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (modalTitle) modalTitle.textContent = 'Download track';
     if (el.downloadPreviewTitle) el.downloadPreviewTitle.textContent = track.title || 'untitled';
     if (el.downloadPreviewArtist) el.downloadPreviewArtist.textContent = track.artist || 'unknown artist';
+    refreshTrackDownloadedBadge(document.getElementById('download-preview-downloaded'), track);
 
     const trimStartEl = document.getElementById('trim-start');
     const trimEndEl = document.getElementById('trim-end');
@@ -16242,6 +16382,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // a playlist, all favorites or the selected songs: { name, tracks }
   function openDownloadAllModal(playlist, title = 'Download playlist') {
     if (!el.downloadModal) return;
+    if (isDownloadJobActive()) {
+      openDownloadModalForActiveJob();
+      return;
+    }
     const tracks = (playlist && Array.isArray(playlist.tracks) ? playlist.tracks : []).filter(t => t.platform !== 'local');
     if (!tracks.length) {
       showToast(Tm('No songs to download here (songs from your own files are already on this device)'), 'info');
@@ -16255,6 +16399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (modalTitle) modalTitle.textContent = title;
     if (el.downloadPreviewTitle) el.downloadPreviewTitle.textContent = playlist.name || 'Playlist';
     if (el.downloadPreviewArtist) I18N.text(el.downloadPreviewArtist, tracks.length === 1 ? '1 track' : '{0} tracks', tracks.length);
+    refreshTrackDownloadedBadge(document.getElementById('download-preview-downloaded'), null);
     if (el.downloadPreviewThumb) el.downloadPreviewThumb.style.display = 'none';
     if (el.downloadPreviewFallback) el.downloadPreviewFallback.style.display = 'none';
     updateDownloadBtnLabel();
@@ -16290,8 +16435,336 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   let downloadAbort = null;
+  let activeDownloadJob = null;
+  let downloadProgressTimer = null;
+  let downloadRenderLast = 0;
+
+  function isDownloadJobActive() {
+    return !!(activeDownloadJob && !activeDownloadJob.finished);
+  }
+
+  function makeDownloadProgressKey(prefix) {
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function formatDownloadBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+    if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${Math.round(n)} B`;
+  }
+
+  function formatDownloadSpeed(bytesPerSecond) {
+    const n = Number(bytesPerSecond);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB/s`;
+    if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB/s`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB/s`;
+    return `${Math.round(n)} B/s`;
+  }
+
+  function beginDownloadJob(kind, opts = {}) {
+    const job = {
+      kind,
+      abort: new AbortController(),
+      startedAt: Date.now(),
+      finished: false,
+      cancelled: false,
+      total: Math.max(1, Number(opts.total) || 1),
+      done: 0,
+      failed: 0,
+      percent: null,
+      speed: 0,
+      phase: kind === 'batch' ? 'downloading' : 'preparing',
+      title: opts.title || '',
+      artist: opts.artist || '',
+      thumbnail: opts.thumbnail || '',
+      name: opts.name || '',
+      received: 0,
+      totalBytes: 0,
+      activeItems: new Map(),
+      serverKeys: new Set(),
+    };
+    activeDownloadJob = job;
+    downloadAbort = job.abort;
+    if (el.btnConfirmDownload) el.btnConfirmDownload.disabled = true;
+    if (el.btnCancelDownload) el.btnCancelDownload.textContent = T('Cancel download');
+    renderDownloadProgress(true);
+    return job;
+  }
+
+  function finishDownloadJob(job) {
+    if (!job || job.finished) return;
+    job.finished = true;
+    if (activeDownloadJob === job) activeDownloadJob = null;
+    if (downloadAbort === job.abort) downloadAbort = null;
+    if (downloadProgressTimer) {
+      clearInterval(downloadProgressTimer);
+      downloadProgressTimer = null;
+    }
+    job.activeItems.clear();
+    job.serverKeys.clear();
+    if (el.btnConfirmDownload) el.btnConfirmDownload.disabled = false;
+    if (el.btnCancelDownload) el.btnCancelDownload.textContent = T('Cancel');
+    const closeDialog = document.getElementById('download-close-modal');
+    if (closeDialog && !closeDialog.classList.contains('hidden')) closeModal(closeDialog);
+    renderDownloadProgress(true);
+  }
+
+  function downloadJobAddItem(job, key, title) {
+    if (!job || job.finished) return;
+    job.activeItems.set(key, { title: title || '', percent: null, speed: 0, phase: 'downloading' });
+    job.serverKeys.add(key);
+    startDownloadProgressPolling(job);
+    renderDownloadProgress(true);
+  }
+
+  function downloadJobRemoveItem(job, key) {
+    if (!job) return;
+    job.activeItems.delete(key);
+    job.serverKeys.delete(key);
+  }
+
+  function startDownloadProgressPolling(job) {
+    if (!job || job.finished) return;
+    if (downloadProgressTimer) return;
+    const tick = async () => {
+      if (!job || job.finished || !job.serverKeys.size) return;
+      const keys = [...job.serverKeys];
+      try {
+        const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/download-progress?keys=${encodeURIComponent(keys.join(','))}`);
+        const data = await res.json();
+        if (!data || !data.success || !data.progress) return;
+        let changed = false;
+        for (const key of keys) {
+          const update = data.progress[key];
+          const item = job.activeItems.get(key);
+          if (!update || !item) continue;
+          if (Number.isFinite(update.percent)) item.percent = Math.max(0, Math.min(100, update.percent));
+          if (Number.isFinite(update.speed)) item.speed = Math.max(0, update.speed);
+          if (update.phase) item.phase = update.phase;
+          if (update.status === 'finished') item.percent = 100;
+          changed = true;
+        }
+        if (changed) renderDownloadProgress(true);
+      } catch (_) {}
+    };
+    downloadProgressTimer = setInterval(tick, 500);
+    tick();
+  }
+
+  function renderDownloadProgress(force = false) {
+    const now = Date.now();
+    if (!force && now - downloadRenderLast < 120) return;
+    downloadRenderLast = now;
+
+    const modal = el.downloadModal || document.getElementById('download-modal');
+    const progress = document.getElementById('dl-progress');
+    const mini = document.getElementById('download-mini');
+    const job = isDownloadJobActive() ? activeDownloadJob : null;
+
+    if (!job) {
+      if (progress) progress.classList.add('hidden');
+      if (mini) mini.classList.add('hidden');
+      if (modal) modal.classList.remove('is-downloading');
+      return;
+    }
+
+    let percent = null;
+    let label = T('Downloading');
+    let phaseText = '';
+    let speed = 0;
+    let itemRows = [];
+
+    if (job.kind === 'batch') {
+      const total = Math.max(1, job.total || 1);
+      const completed = Math.min(total, job.done + job.failed);
+      let activeFraction = 0;
+      let activeCount = 0;
+      for (const item of job.activeItems.values()) {
+        activeCount++;
+        // an active item that has finished downloading still has converting/saving left: keep the overall bar
+        // below 100% until the batch counts it as done
+        if (Number.isFinite(item.percent)) activeFraction += Math.max(0, Math.min(99, item.percent)) / 100;
+        speed += Number(item.speed) || 0;
+        if (itemRows.length < 2) {
+          const itemPercent = Number.isFinite(item.percent) ? Math.max(0, Math.min(100, item.percent)) : null;
+          itemRows.push({
+            title: item.title || T('Track'),
+            percent: itemPercent,
+            speed: Number(item.speed) || 0,
+            phase: item.phase || '',
+          });
+        }
+      }
+      percent = Math.max(0, Math.min(100, ((completed + activeFraction) / total) * 100));
+      label = Tf('Downloading {0}/{1}', Math.min(total, completed + activeCount), total);
+      phaseText = activeCount ? Tf('{0} active', activeCount) : (completed === 0 ? T('Preparing') : T('Waiting'));
+      if (job.failed) phaseText += ` · ${Tf('{0} failed', job.failed)}`;
+    } else {
+      percent = Number.isFinite(job.percent) ? Math.max(0, Math.min(100, job.percent)) : null;
+      speed = Number(job.speed) || 0;
+      if (job.phase === 'processing') label = T('Processing audio');
+      else if (job.phase === 'encoding') label = T('Encoding');
+      else if (job.phase === 'locating') label = T('Finding audio');
+      else if (job.phase === 'preparing') label = T('Preparing');
+      else label = T('Downloading');
+      if (job.received > 0) {
+        phaseText = `${formatDownloadBytes(job.received)}${job.totalBytes > 0 ? ` / ${formatDownloadBytes(job.totalBytes)}` : ''}`;
+      }
+    }
+
+    const displayPercent = percent === null
+      ? null
+      : (job.kind === 'batch' && job.done + job.failed < job.total ? Math.min(99, Math.round(percent)) : Math.round(percent));
+    const pctText = displayPercent === null ? '' : `${displayPercent}%`;
+    if (modal) modal.classList.add('is-downloading');
+
+    if (progress) {
+      progress.classList.remove('hidden');
+      const labelEl = document.getElementById('dl-progress-label');
+      const pctEl = document.getElementById('dl-progress-pct');
+      const phaseEl = document.getElementById('dl-progress-phase');
+      const speedEl = document.getElementById('dl-progress-speed');
+      const track = document.getElementById('dl-progress-track');
+      const fill = document.getElementById('dl-progress-fill');
+      const itemsEl = document.getElementById('dl-progress-items');
+      if (labelEl) labelEl.textContent = label;
+      if (pctEl) pctEl.textContent = pctText;
+      if (phaseEl) phaseEl.textContent = phaseText;
+      if (speedEl) speedEl.textContent = formatDownloadSpeed(speed);
+      if (track) {
+        track.setAttribute('role', 'progressbar');
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', '100');
+        if (displayPercent === null) {
+          track.removeAttribute('aria-valuenow');
+          track.classList.add('indeterminate');
+        } else {
+          track.setAttribute('aria-valuenow', String(displayPercent));
+          track.classList.remove('indeterminate');
+        }
+      }
+      if (fill) fill.style.width = displayPercent === null ? '' : `${displayPercent}%`;
+      if (itemsEl) {
+        itemsEl.innerHTML = itemRows.map((item) => {
+          const p = item.percent === null ? null : Math.round(item.percent);
+          const speedText = item.speed > 0 ? formatDownloadSpeed(item.speed) : '';
+          const phaseLabel = item.phase === 'converting' ? T('Converting') : item.phase === 'copying' ? T('Saving') : '';
+          const meta = [p === null ? '' : `${p}%`, phaseLabel, speedText].filter(Boolean).join(' · ');
+          return `<div class="download-progress-item"><span class="download-progress-item-name">${escapeHtml(item.title)}</span><span class="download-progress-item-pct">${meta}</span><div class="download-progress-track${p === null ? ' indeterminate' : ''}"><div class="download-progress-fill"${p === null ? '' : ` style="width:${p}%"`}></div></div></div>`;
+        }).join('');
+      }
+    }
+
+    if (mini) {
+      const modalOpen = !!(modal && modal.classList.contains('visible') && !modal.classList.contains('hidden'));
+      if (modalOpen) {
+        mini.classList.add('hidden');
+      } else {
+        mini.classList.remove('hidden');
+        const miniLabel = document.getElementById('download-mini-label');
+        const miniPct = document.getElementById('download-mini-pct');
+        const miniFill = document.getElementById('download-mini-fill');
+        const miniTrack = document.getElementById('download-mini-track');
+        const miniDetail = document.getElementById('download-mini-detail');
+        const miniSpeed = document.getElementById('download-mini-speed');
+        if (miniLabel) miniLabel.textContent = job.kind === 'batch' ? label : (job.title || T('Downloading'));
+        if (miniPct) miniPct.textContent = pctText;
+        if (miniDetail) miniDetail.textContent = job.kind === 'batch' ? phaseText : (phaseText || label);
+        if (miniSpeed) miniSpeed.textContent = formatDownloadSpeed(speed);
+        if (miniFill) miniFill.style.width = displayPercent === null ? '' : `${displayPercent}%`;
+        if (miniTrack) miniTrack.classList.toggle('indeterminate', displayPercent === null);
+      }
+    }
+  }
+
+  function readResponseWithProgress(response, onProgress) {
+    const total = Number(response.headers.get('content-length')) || 0;
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      return response.arrayBuffer().then((buffer) => {
+        if (onProgress) onProgress({ received: buffer.byteLength, total, percent: total ? 100 : null, speed: 0 });
+        return buffer;
+      });
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+    let lastAt = Date.now();
+    let lastBytes = 0;
+    let smoothed = 0;
+    const report = (final) => {
+      const now = Date.now();
+      if (!final && now - lastAt < 200) return;
+      const seconds = Math.max(0.001, (now - lastAt) / 1000);
+      const instant = Math.max(0, (received - lastBytes) / seconds);
+      smoothed = smoothed > 0 ? smoothed * 0.7 + instant * 0.3 : instant;
+      lastAt = now;
+      lastBytes = received;
+      if (onProgress) onProgress({
+        received,
+        total,
+        percent: total > 0 ? Math.min(100, (received / total) * 100) : null,
+        speed: final ? 0 : smoothed,
+      });
+    };
+    return (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        received += value.byteLength;
+        report(false);
+      }
+      report(true);
+      const out = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return out.buffer;
+    })();
+  }
+
+  function requestDownloadModalClose() {
+    if (!isDownloadJobActive()) {
+      if (el.downloadModal) closeModal(el.downloadModal);
+      return;
+    }
+    const closeDialog = document.getElementById('download-close-modal');
+    if (closeDialog) openModal(closeDialog);
+    else if (el.downloadModal) closeModal(el.downloadModal);
+  }
+
+  function continueDownloadInBackground() {
+    const closeDialog = document.getElementById('download-close-modal');
+    if (closeDialog) closeModal(closeDialog);
+    if (el.downloadModal) closeModal(el.downloadModal);
+    renderDownloadProgress(true);
+    showToast(Tm('Download continues in the background'), 'info');
+  }
 
   function cancelCurrentDownload() {
+    const job = activeDownloadJob;
+    if (job) {
+      job.cancelled = true;
+      try { job.abort.abort(); } catch (_) {}
+      finishDownloadJob(job);
+      const curSpinner = el.downloadSpinner || document.getElementById('download-spinner');
+      if (curSpinner) curSpinner.innerHTML = '';
+      if (el.btnConfirmDownload) {
+        el.btnConfirmDownload.style.display = '';
+        el.btnConfirmDownload.disabled = false;
+      }
+      updateDownloadBtnLabel();
+      showToast(Tm('Download cancelled'), 'info');
+      if (el.downloadModal) closeModal(el.downloadModal);
+      return true;
+    }
     if (downloadAbort) {
       try { downloadAbort.abort(); } catch (_) {}
       downloadAbort = null;
@@ -16309,8 +16782,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     return false;
   }
 
+  function openDownloadModalForActiveJob() {
+    const job = activeDownloadJob;
+    if (!job || !el.downloadModal) return;
+    const modal = el.downloadModal;
+    const modalTitle = document.getElementById('download-modal-title');
+    showDownloadPane('download');
+    if (job.kind === 'batch') {
+      modal.classList.add('batch-mode');
+      if (modalTitle) modalTitle.textContent = T('Downloading');
+      if (el.downloadPreviewTitle) el.downloadPreviewTitle.textContent = job.name || T('Playlist');
+      if (el.downloadPreviewArtist) el.downloadPreviewArtist.textContent = Tf('{0} tracks', job.total);
+      refreshTrackDownloadedBadge(document.getElementById('download-preview-downloaded'), null);
+      if (el.downloadPreviewThumb) el.downloadPreviewThumb.style.display = 'none';
+      if (el.downloadPreviewFallback) el.downloadPreviewFallback.style.display = 'none';
+    } else {
+      modal.classList.remove('batch-mode');
+      if (modalTitle) modalTitle.textContent = T('Downloading');
+      if (el.downloadPreviewTitle) el.downloadPreviewTitle.textContent = job.title || T('Track');
+      if (el.downloadPreviewArtist) el.downloadPreviewArtist.textContent = job.artist || '';
+      refreshTrackDownloadedBadge(document.getElementById('download-preview-downloaded'), trackToDownload);
+      if (job.thumbnail) {
+        if (el.downloadPreviewThumb) {
+          el.downloadPreviewThumb.src = job.thumbnail;
+          el.downloadPreviewThumb.style.display = 'block';
+        }
+        if (el.downloadPreviewFallback) el.downloadPreviewFallback.style.display = 'none';
+      } else {
+        if (el.downloadPreviewThumb) el.downloadPreviewThumb.style.display = 'none';
+        if (el.downloadPreviewFallback) el.downloadPreviewFallback.style.display = 'flex';
+      }
+    }
+    openModal(modal);
+    renderDownloadProgress(true);
+  }
+
   if (el.btnCloseDownloadModal) {
     el.btnCloseDownloadModal.addEventListener('click', () => {
+      if (isDownloadJobActive()) {
+        requestDownloadModalClose();
+        return;
+      }
       if (!cancelCurrentDownload()) {
         if (el.downloadModal) closeModal(el.downloadModal);
       }
@@ -16319,9 +16831,41 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (el.btnCancelDownload) {
     el.btnCancelDownload.addEventListener('click', () => {
-      if (!cancelCurrentDownload()) {
+      if (isDownloadJobActive()) {
+        requestDownloadModalClose();
+      } else if (!cancelCurrentDownload()) {
         if (el.downloadModal) closeModal(el.downloadModal);
       }
+    });
+  }
+
+  const btnDownloadKeepOpen = document.getElementById('btn-download-keep-open');
+  if (btnDownloadKeepOpen) {
+    btnDownloadKeepOpen.addEventListener('click', () => {
+      const closeDialog = document.getElementById('download-close-modal');
+      if (closeDialog) closeModal(closeDialog);
+    });
+  }
+  const btnDownloadBackground = document.getElementById('btn-download-background');
+  if (btnDownloadBackground) btnDownloadBackground.addEventListener('click', continueDownloadInBackground);
+  const btnDownloadCancelAll = document.getElementById('btn-download-cancel-all');
+  if (btnDownloadCancelAll) btnDownloadCancelAll.addEventListener('click', () => {
+    const closeDialog = document.getElementById('download-close-modal');
+    if (closeDialog) closeModal(closeDialog);
+    cancelCurrentDownload();
+  });
+  const downloadMini = document.getElementById('download-mini');
+  if (downloadMini) {
+    downloadMini.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('#download-mini-cancel')) return;
+      openDownloadModalForActiveJob();
+    });
+  }
+  const downloadMiniCancel = document.getElementById('download-mini-cancel');
+  if (downloadMiniCancel) {
+    downloadMiniCancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelCurrentDownload();
     });
   }
 
@@ -16446,19 +16990,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.btnConfirmDownload.addEventListener('click', async () => {
       if (downloadBatch) {
         const batch = downloadBatch;
-        el.btnConfirmDownload.disabled = true;
         let lastDir = null;
-        // Cancel/X used to only hide the dialog while every song kept downloading
-        const batchAbort = new AbortController();
-        downloadAbort = batchAbort;
         const total = batch.tracks.length;
+        const job = beginDownloadJob('batch', { total: Math.max(1, total), name: batch.name });
+        const batchAbort = job.abort;
         // songs already in the Downloads folder aren't downloaded again (#29)
         const present = await downloadedInFolder(batch.tracks).catch(() => null);
+        if (job.abort.signal.aborted) {
+          finishDownloadJob(job);
+          return;
+        }
         const tracks = present ? batch.tracks.filter((_, i) => !present[i]) : batch.tracks;
         const skipped = total - tracks.length;
+        job.total = Math.max(1, tracks.length);
         const setProgress = (p) => {
-          if (el.downloadBtnText) el.downloadBtnText.textContent = Tf('Downloading {0}/{1}', Math.min(tracks.length, p.done + p.failed + 1), tracks.length) + (p.failed ? ` · ${Tf('{0} failed', p.failed)}` : '');
-          if (typeof batch.onProgress === 'function') batch.onProgress(p.done + p.failed, tracks.length);
+          job.done = p.done || 0;
+          job.failed = p.failed || 0;
+          if (el.downloadBtnText) el.downloadBtnText.textContent = Tf('Downloading {0}/{1}', Math.min(tracks.length, job.done + job.failed + 1), tracks.length) + (job.failed ? ` · ${Tf('{0} failed', job.failed)}` : '');
+          if (typeof batch.onProgress === 'function') batch.onProgress(job.done + job.failed, tracks.length);
+          renderDownloadProgress(true);
         };
         setProgress({ done: 0, failed: 0 });
         const downloadOne = async (t, { fresh }) => {
@@ -16468,13 +17018,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             const found = await batch.resolve(t).catch(() => null);
             if (found && found.url) src = { ...t, url: found.url, id: found.id || t.id };
           }
-          const downloadUrl = `http://127.0.0.1:${state.serverPort}/api/download?url=${encodeURIComponent(src.url || '')}&id=${encodeURIComponent(src.id || '')}&title=${encodeURIComponent(t.title || '')}&artist=${encodeURIComponent(t.artist || '')}&format=${selectedFormat}&quality=${selectedQuality}${fresh ? '&fresh=1' : ''}`;
-          const res = await fetch(downloadUrl, { signal: batchAbort.signal });
-          const text = await res.text();
-          let data;
-          try { data = JSON.parse(text); } catch (e) { throw Object.assign(new Error(text || 'server error'), { status: res.status }); }
-          if (!data.success) throw Object.assign(new Error(data.error || 'Failed to download'), { status: res.status });
-          if (data.directory) lastDir = data.directory;
+          const progressKey = makeDownloadProgressKey('batch');
+          downloadJobAddItem(job, progressKey, t.title || t.url || '');
+          try {
+            const downloadUrl = `http://127.0.0.1:${state.serverPort}/api/download?url=${encodeURIComponent(src.url || '')}&id=${encodeURIComponent(src.id || '')}&title=${encodeURIComponent(t.title || '')}&artist=${encodeURIComponent(t.artist || '')}&format=${selectedFormat}&quality=${selectedQuality}${fresh ? '&fresh=1' : ''}&progressKey=${encodeURIComponent(progressKey)}`;
+            const res = await fetch(downloadUrl, { signal: batchAbort.signal });
+            const text = await res.text();
+            let data;
+            try { data = JSON.parse(text); } catch (e) { throw Object.assign(new Error(text || 'server error'), { status: res.status }); }
+            if (!data.success) throw Object.assign(new Error(data.error || 'Failed to download'), { status: res.status });
+            if (data.directory) lastDir = data.directory;
+          } finally {
+            downloadJobRemoveItem(job, progressKey);
+          }
         };
         const result = tracks.length ? await window.CanaryDownloadBatch.runDownloadBatch(tracks, downloadOne, {
           concurrency: 2, signal: batchAbort.signal, onProgress: setProgress,
@@ -16482,16 +17038,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         for (const f of result.failed) console.error('Download failed:', f.item.title || f.item.url || '', f.error && f.error.message);
         const done = result.done.length;
         const failedTracks = result.failed.map((f) => f.item);
-        el.btnConfirmDownload.disabled = false;
-        if (downloadAbort === batchAbort) downloadAbort = null;
+        job.done = done;
+        job.failed = failedTracks.length;
+        if (done || skipped) invalidateDownloadedBadges();
         if (typeof batch.onDone === 'function') batch.onDone(done + skipped, total);
         // on phones the server answers with the app's internal path (/data/Downloads); name the real folder
         if (isPhoneApp && lastDir) {
           try { lastDir = (await window.electronAPI.getDownloadDir()).dir || lastDir; } catch (e) {}
         }
         if (batchAbort.signal.aborted) {
-          // cancelCurrentDownload already closed the dialog; another one may be open by now
-          if (done) showToast(lastDir ? Tm('Stopped. {0} of {1} songs were downloaded to {2}', done, tracks.length, lastDir) : Tm('Stopped. {0} of {1} songs were downloaded', done, tracks.length), 'info');
+          finishDownloadJob(job);
+          // cancelCurrentDownload already showed its message; another dialog may be open by now
+          if (!job.cancelled && done) showToast(lastDir ? Tm('Stopped. {0} of {1} songs were downloaded to {2}', done, tracks.length, lastDir) : Tm('Stopped. {0} of {1} songs were downloaded', done, tracks.length), 'info');
           return;
         }
         const summary = [Tf('{0} downloaded', done)];
@@ -16499,12 +17057,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (failedTracks.length) summary.push(Tf('{0} failed', failedTracks.length));
         if (failedTracks.length) {
           // the dialog stays open with the summary; its button now retries just the failed songs
+          finishDownloadJob(job);
           downloadBatch = { ...batch, tracks: failedTracks, retry: true };
           if (el.downloadPreviewArtist) el.downloadPreviewArtist.textContent = summary.join(' · ');
           updateDownloadBtnLabel();
           showToast(Tm('Downloaded {0}/{1} ({2} failed)', done + skipped, total, failedTracks.length), 'error');
           return;
         }
+        finishDownloadJob(job);
         downloadBatch = null;
         if (el.downloadModal) closeModal(el.downloadModal);
         showToast(lastDir ? Tm('Downloaded {0} tracks to {1}', done, lastDir) + (skipped ? ` (${summary.slice(1).join(', ')})` : '') : summary.join(' · '), 'success');
@@ -16527,6 +17087,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
+      const job = beginDownloadJob('single', { title: t.title || '', artist: t.artist || '', thumbnail: t.thumbnail || '' });
+      const abortSignal = job.abort.signal;
       if (el.btnConfirmDownload) {
         el.btnConfirmDownload.disabled = true;
         el.btnConfirmDownload.style.display = 'none';
@@ -16544,20 +17106,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       showToast(Tm('Downloading: {0}', `${t.title || T('Track')} (.${selectedFormat})`), 'info');
-      downloadAbort = new AbortController();
 
       try {
         // Phones have no audio rendering pipeline or ffmpeg: the server saves the song file as it is
         // (the decode-and-encode path below always ended in "Download failed" there)
         if (isPhoneApp) {
           if (t.platform === 'local') throw new Error('This song is already on your phone');
-          const r = await fetch(`http://127.0.0.1:${state.serverPort}/api/download?url=${encodeURIComponent(t.url || '')}&id=${encodeURIComponent(t.id || '')}&title=${encodeURIComponent(t.title || '')}&artist=${encodeURIComponent(t.artist || '')}&format=${selectedFormat}&quality=${selectedQuality}`, { signal: downloadAbort.signal });
+          const progressKey = makeDownloadProgressKey('single');
+          job.phase = 'downloading';
+          downloadJobAddItem(job, progressKey, t.title || '');
+          const r = await fetch(`http://127.0.0.1:${state.serverPort}/api/download?url=${encodeURIComponent(t.url || '')}&id=${encodeURIComponent(t.id || '')}&title=${encodeURIComponent(t.title || '')}&artist=${encodeURIComponent(t.artist || '')}&format=${selectedFormat}&quality=${selectedQuality}&progressKey=${encodeURIComponent(progressKey)}`, { signal: abortSignal });
           const d = await r.json();
           if (!d.success) throw new Error(d.error || 'Download failed');
+          downloadJobRemoveItem(job, progressKey);
+          job.percent = 100;
+          job.done = 1;
+          markTrackDownloaded(t);
+          finishDownloadJob(job);
           showToast(Tm('Download complete: saved as {0}', d.filename), 'info');
           if (el.downloadModal) closeModal(el.downloadModal);
           return;
         }
+        job.phase = 'locating';
+        job.percent = null;
+        job.speed = 0;
+        renderDownloadProgress(true);
         let audioSourceUrl = null;
         const isCurrent = isSameTrack(t, state.currentTrack);
         if (isCurrent && el.nativeAudio && el.nativeAudio.src && !el.nativeAudio.src.startsWith('blob:')) {
@@ -16570,7 +17143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!audioSourceUrl && t.id) {
           try {
-            const checkRes = await fetch(`http://127.0.0.1:${state.serverPort}/api/check-cache?id=${encodeURIComponent(t.id)}`, { signal: downloadAbort.signal });
+            const checkRes = await fetch(`http://127.0.0.1:${state.serverPort}/api/check-cache?id=${encodeURIComponent(t.id)}`, { signal: abortSignal });
             const checkData = await checkRes.json();
             if (checkData && checkData.cached) {
               audioSourceUrl = `http://127.0.0.1:${state.serverPort}/api/local-track?id=${encodeURIComponent(t.id)}`;
@@ -16580,7 +17153,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!audioSourceUrl) {
           const streamInfoUrl = `http://127.0.0.1:${state.serverPort}/api/stream-info?url=${encodeURIComponent(t.url || '')}&id=${encodeURIComponent(t.id || '')}&platform=${t.platform || 'youtube'}&title=${encodeURIComponent(t.title || '')}&artist=${encodeURIComponent(t.artist || '')}&duration=${encodeURIComponent(t.duration || 0)}`;
-          const streamRes = await fetch(streamInfoUrl, { signal: downloadAbort.signal });
+          const streamRes = await fetch(streamInfoUrl, { signal: abortSignal });
           const streamData = await streamRes.json();
           if (!streamData || !streamData.success || (!streamData.streamUrl && !streamData.proxyUrl)) {
             throw new Error((streamData && streamData.error) || 'Failed to locate track audio stream');
@@ -16594,18 +17167,35 @@ document.addEventListener('DOMContentLoaded', async () => {
           fetchUrl = `http://127.0.0.1:${state.serverPort}/api/audio-proxy?url=${encodeURIComponent(audioSourceUrl)}`;
         }
 
-        const resFile = await fetch(fetchUrl, { signal: downloadAbort.signal });
+        job.phase = 'downloading';
+        job.percent = 0;
+        job.speed = 0;
+        job.received = 0;
+        job.totalBytes = 0;
+        renderDownloadProgress(true);
+        const resFile = await fetch(fetchUrl, { signal: abortSignal });
         if (!resFile.ok) throw new Error(`Failed to load audio (${resFile.status})`);
-        const arrayBuffer = await resFile.arrayBuffer();
+        const arrayBuffer = await readResponseWithProgress(resFile, (p) => {
+          job.phase = 'downloading';
+          job.percent = p.percent;
+          job.speed = p.speed;
+          job.received = p.received;
+          job.totalBytes = p.total;
+          renderDownloadProgress();
+        });
 
-        if (downloadAbort?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (abortSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+        job.phase = 'processing';
+        job.percent = null;
+        job.speed = 0;
+        renderDownloadProgress(true);
         const decodeCtx = audioEngine.ctx || new (window.AudioContext || window.webkitAudioContext)();
         const decodedBuffer = await new Promise((resolve, reject) => {
           decodeCtx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
         });
 
-        if (downloadAbort?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (abortSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         let bufferToProcess = decodedBuffer;
         if (startSec > 0 || (endSec !== null && endSec < decodedBuffer.duration)) {
@@ -16624,18 +17214,22 @@ document.addEventListener('DOMContentLoaded', async () => {
           finalBuffer = await audioEngine.renderOffline(bufferToProcess, currentSettings);
         }
 
-        if (downloadAbort?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (abortSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         const wavBlob = audioBufferToWav(finalBuffer);
 
-        if (downloadAbort?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (abortSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+        job.phase = 'encoding';
+        job.percent = null;
+        job.speed = 0;
+        renderDownloadProgress(true);
         const encodeUrl = `http://127.0.0.1:${state.serverPort}/api/encode?title=${encodeURIComponent(t.title || 'untitled')}&artist=${encodeURIComponent(t.artist || 'unknown artist')}&format=${selectedFormat}&quality=${selectedQuality}`;
         const resEncode = await fetch(encodeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'audio/wav' },
           body: wavBlob,
-          signal: downloadAbort.signal
+          signal: abortSignal
         });
         const textEncode = await resEncode.text();
         let dataEncode;
@@ -16646,14 +17240,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (!dataEncode.success) throw new Error(dataEncode.error || 'Failed to encode');
 
+        job.percent = 100;
+        job.done = 1;
+        markTrackDownloaded(t);
+        finishDownloadJob(job);
         showToast(Tm('Download complete: saved to {0}', `${dataEncode.directory ? dataEncode.directory + '/' : ''}${dataEncode.filename}`), 'info');
         if (el.downloadModal) closeModal(el.downloadModal);
       } catch (err) {
-        if (err.name === 'AbortError') return;
+        if (err.name === 'AbortError') {
+          finishDownloadJob(job);
+          return;
+        }
         console.error('Download error:', err);
+        finishDownloadJob(job);
         showToast(Tm('Download failed: {0}', err.message), 'error');
       } finally {
-        downloadAbort = null;
         const curSpinner = el.downloadSpinner || document.getElementById('download-spinner');
         if (curSpinner) curSpinner.innerHTML = '';
         if (el.btnConfirmDownload) {
@@ -16661,6 +17262,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           el.btnConfirmDownload.disabled = false;
         }
         updateDownloadBtnLabel();
+        if (!job.finished) finishDownloadJob(job);
       }
     });
   }
@@ -18736,6 +19338,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       updateDownloadFolderUI();
       updateDownloadCaptionPath();
+      invalidateDownloadedBadges();
       showToast(Tm('Downloads will be saved to {0}', res.dir));
     });
   }
@@ -18758,6 +19361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
       updateDownloadFolderUI();
+      invalidateDownloadedBadges();
       showToast(Tm('Download folder reset to default'));
     });
   }

@@ -28,7 +28,7 @@ https.get = (target) => { outbound.push(String(target)); throw new Error('no net
 https.request = (target) => { outbound.push(String(target)); throw new Error('no network in tests'); };
 
 const { startServer, stopServer, getServerToken } = require('../server');
-const { LIBRARY_PATH, METADATA_PATH } = require('../platform');
+const { LIBRARY_PATH, METADATA_PATH, CACHE_DIR } = require('../platform');
 let port;
 
 before(async () => { port = await startServer(0); });
@@ -140,4 +140,32 @@ test('downloaded-status says which songs of a list already have a downloaded fil
   assert.deepEqual(JSON.parse(r.body), { success: true, downloaded: [true, false, false] });
   const anon = await call('POST', '/api/downloaded-status', { body: '{}', token: false });
   assert.notEqual(anon.status, 200);
+});
+
+test('downloaded-status can ignore cache-only songs for the Downloaded badge', async () => {
+  const cacheDir = CACHE_DIR;
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(cacheDir, 'cache_only_song.opus'), Buffer.alloc(70000));
+  const tracks = [
+    { title: 'Space Song', artist: 'Beach House' },
+    { title: 'Cache Only', artist: 'Nobody', id: 'cache_only_song' },
+  ];
+  const filesOnly = await call('POST', '/api/downloaded-status', {
+    body: JSON.stringify({ filesOnly: true, tracks }),
+  });
+  assert.equal(filesOnly.status, 200);
+  assert.deepEqual(JSON.parse(filesOnly.body).downloaded, [true, false]);
+  const all = await call('POST', '/api/downloaded-status', {
+    body: JSON.stringify({ tracks }),
+  });
+  assert.equal(all.status, 200);
+  assert.deepEqual(JSON.parse(all.body).downloaded, [true, true]);
+  // a file added after the index was built is seen when the app asks for a refresh (Downloads folder changed)
+  const downloadsDir = path.join(tmp, 'Downloads');
+  fs.writeFileSync(path.join(downloadsDir, 'Beach House - Myth.mp3'), 'x');
+  const refreshed = await call('POST', '/api/downloaded-status', {
+    body: JSON.stringify({ filesOnly: true, refresh: true, tracks: [{ title: 'Myth', artist: 'Beach House' }] }),
+  });
+  assert.equal(refreshed.status, 200);
+  assert.deepEqual(JSON.parse(refreshed.body).downloaded, [true]);
 });

@@ -2084,6 +2084,9 @@
         <div class="right-panel-meta">
           <div class="right-panel-title-row" style="display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0;">
             <h3 class="right-panel-title" id="right-panel-title" style="flex: 1; min-width: 0;">No track playing</h3>
+            <span class="track-downloaded-badge hidden" id="right-panel-downloaded" title="Downloaded" aria-label="Downloaded">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="8 12.5 11 15.5 16 9"></polyline></svg>
+            </span>
           </div>
           <span class="right-panel-artist" id="right-panel-artist">Select a track to listen</span>
         </div>
@@ -2136,8 +2139,13 @@
         </div>
       </div>
       <div class="track-meta">
-        <div class="track-title-marquee">
-          <span class="track-title" id="playbar-title">No track playing</span>
+        <div class="track-title-line">
+          <div class="track-title-marquee">
+            <span class="track-title" id="playbar-title">No track playing</span>
+          </div>
+          <span class="track-downloaded-badge hidden" id="playbar-downloaded" title="Downloaded" aria-label="Downloaded">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="8 12.5 11 15.5 16 9"></polyline></svg>
+          </span>
         </div>
         <span class="track-artist" id="playbar-artist">Select a track to listen</span>
       </div>
@@ -3125,7 +3133,12 @@
         <img class="download-preview-thumb" id="download-preview-thumb" src="" alt="" onerror="this.style.display='none'">
         <div class="download-preview-fallback" id="download-preview-fallback">🎵</div>
         <div class="download-preview-info">
-          <span class="download-preview-title" id="download-preview-title">Track title</span>
+          <div class="download-preview-title-line">
+            <span class="download-preview-title" id="download-preview-title">Track title</span>
+            <span class="track-downloaded-badge hidden" id="download-preview-downloaded" title="Downloaded" aria-label="Downloaded">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="8 12.5 11 15.5 16 9"></polyline></svg>
+            </span>
+          </div>
           <span class="download-preview-artist" id="download-preview-artist">Artist</span>
         </div>
       </div>
@@ -3197,6 +3210,21 @@
         </div>
       </div>
 
+      <div class="download-progress hidden" id="dl-progress" aria-live="polite">
+        <div class="download-progress-head">
+          <span class="download-progress-label" id="dl-progress-label" data-i18n>Downloading</span>
+          <span class="download-progress-pct" id="dl-progress-pct"></span>
+        </div>
+        <div class="download-progress-track" id="dl-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+          <div class="download-progress-fill" id="dl-progress-fill"></div>
+        </div>
+        <div class="download-progress-meta">
+          <span id="dl-progress-phase"></span>
+          <span id="dl-progress-speed"></span>
+        </div>
+        <div class="download-progress-items" id="dl-progress-items"></div>
+      </div>
+
       <div class="download-modal-actions">
         <button class="btn-text-error hidden" id="btn-delete-offline-track">Delete offline file</button>
         <div class="download-actions-right">
@@ -3238,6 +3266,36 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="download-close-modal">
+    <div class="dialog-card download-close-card">
+      <h3 data-i18n>Download in progress</h3>
+      <p class="download-close-message" data-i18n>Closing this window does not have to stop the download. You can keep it running in the background and keep using Canary. The download stops if you quit Canary.</p>
+      <div class="dialog-actions download-close-actions">
+        <button class="btn-outline-pill" id="btn-download-keep-open" data-i18n>Keep downloading</button>
+        <button class="btn-text-error" id="btn-download-cancel-all" data-i18n>Cancel download</button>
+        <button class="btn-pill-primary" id="btn-download-background" data-i18n>Continue in background</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="download-mini hidden" id="download-mini" role="status" title="Open download progress">
+    <div class="download-mini-head">
+      <svg class="download-mini-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      <span class="download-mini-label" id="download-mini-label" data-i18n>Downloading</span>
+      <span class="download-mini-pct" id="download-mini-pct"></span>
+      <button class="download-mini-cancel" id="download-mini-cancel" type="button" title="Cancel download" aria-label="Cancel download">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="download-progress-track download-mini-track" id="download-mini-track">
+      <div class="download-progress-fill" id="download-mini-fill"></div>
+    </div>
+    <div class="download-mini-meta">
+      <span id="download-mini-detail"></span>
+      <span id="download-mini-speed"></span>
     </div>
   </div>
 

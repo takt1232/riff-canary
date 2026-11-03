@@ -22,6 +22,7 @@ const { createTaskQueue, lowerPriority } = require('./ytdlp-queue');
 const { searchSoundcloudApi } = require('./soundcloud-search');
 const { copyStreamToCache } = require('./cache-copy');
 const streamSource = require('./stream-source');
+const downloadProgressHelper = require('./download-progress');
 // request headers yt-dlp would use for each media URL it resolved (#17), for the audio proxy
 const streamHeaders = new Map();
 function rememberStreamHeaders(url, headers) {
@@ -285,6 +286,48 @@ const downloadingPromises = new Map(); // cleanId -> promise of the running down
 const prefetchingSet = new Set();
 const downloadInFlight = new Map();
 const downloadProcs = new Map(); // cleanId -> the yt-dlp process caching it (phones cancel it on skip)
+// progress of /api/download runs, keyed by an opaque id the app chooses; the dialog polls it while it runs
+const downloadProgress = new Map();
+const DOWNLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
+
+function cleanDownloadProgressKey(value) {
+  const key = String(value || '');
+  return /^[A-Za-z0-9_-]{6,80}$/.test(key) ? key : null;
+}
+
+function setDownloadProgress(key, patch) {
+  if (!key) return;
+  const previous = downloadProgress.get(key) || {};
+  downloadProgress.set(key, { ...previous, ...patch, updatedAt: Date.now() });
+  if (downloadProgress.size > 100) {
+    const now = Date.now();
+    for (const [k, value] of downloadProgress) {
+      if (!value || now - value.updatedAt > DOWNLOAD_PROGRESS_TTL_MS) downloadProgress.delete(k);
+    }
+  }
+}
+
+function endDownloadProgress(key, patch) {
+  if (!key) return;
+  setDownloadProgress(key, patch);
+  const timer = setTimeout(() => downloadProgress.delete(key), 30000);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+}
+
+function getDownloadProgress(keys) {
+  const now = Date.now();
+  const out = {};
+  for (const key of keys) {
+    const value = downloadProgress.get(key);
+    if (!value) continue;
+    if (now - value.updatedAt > DOWNLOAD_PROGRESS_TTL_MS) {
+      downloadProgress.delete(key);
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
 
 // Search results go stale (isCached flags, new uploads) and every query adds a key, so they expire after
 // five minutes and the cache keeps at most 500 of them.
@@ -1558,8 +1601,27 @@ function runYtDlpNow(args, timeoutMs, opts, priority) {
     let stderr = '';
     const outDecoder = new StringDecoder('utf8');
     const errDecoder = new StringDecoder('utf8');
+    let outProgressBuffer = '';
+    let errProgressBuffer = '';
     let timer = null;
     let timedOut = false;
+
+    const feedProgress = (text, isError) => {
+      if (!opts || typeof opts.onProgress !== 'function') return;
+      let buffer = (isError ? errProgressBuffer : outProgressBuffer) + text;
+      let newline;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline).replace(/\r$/, '');
+        buffer = buffer.slice(newline + 1);
+        const progress = downloadProgressHelper.parseProgressLine(line);
+        if (progress) {
+          try { opts.onProgress(progress); } catch (_) {}
+        }
+      }
+      // a line that never ends (a malformed run) shouldn't grow forever
+      if (buffer.length > 16384) buffer = buffer.slice(-4096);
+      if (isError) errProgressBuffer = buffer; else outProgressBuffer = buffer;
+    };
 
     if (timeoutMs > 0) {
       // the queue slot is given back once the process has really gone ('close'), not when it is told to
@@ -1569,8 +1631,16 @@ function runYtDlpNow(args, timeoutMs, opts, priority) {
       }, timeoutMs);
     }
 
-    proc.stdout.on('data', (d) => { stdout += outDecoder.write(d); });
-    proc.stderr.on('data', (d) => { stderr += errDecoder.write(d); });
+    proc.stdout.on('data', (d) => {
+      const text = outDecoder.write(d);
+      stdout += text;
+      feedProgress(text, false);
+    });
+    proc.stderr.on('data', (d) => {
+      const text = errDecoder.write(d);
+      stderr += text;
+      feedProgress(text, true);
+    });
 
     proc.on('close', (code) => {
       if (timer) clearTimeout(timer);
@@ -1620,6 +1690,7 @@ async function cacheThumbnailToDisk(cleanId, thumbnailUrl) {
 // isn't tried again until its backoff has passed
 async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, priority = 'background', clients = YT_PLAYER_CLIENTS) {
   const cleanId = cleanTrackId(trackId);
+  const onProgress = meta && typeof meta.onProgress === 'function' ? meta.onProgress : null;
   const target = youtubeExtractTarget(trackUrl, trackId, platform);
   trackUrl = target.url;
   if (priority === 'background' && ytdlpQueue.backingOff(`dl:${cleanId}`)) return;
@@ -1644,6 +1715,7 @@ async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, prior
     '-o', outTemplate
   ];
 
+  if (onProgress) args.push(...downloadProgressHelper.PROGRESS_ARGS);
   if (target.youtube) args.push('--extractor-args', clients);
 
   args.push('--', trackUrl);
@@ -1673,6 +1745,9 @@ async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, prior
   const copyFromStream = async () => {
     if (STREAM_VIA_CACHE || cancelled || !meta.streamUrl || !isSafeMediaUrl(meta.streamUrl)) return false;
     const started = Date.now();
+    if (onProgress) {
+      try { onProgress({ status: 'downloading', percent: null, speed: null }); } catch (_) {}
+    }
     const done = await copyStreamToCache(resolveBinary('ffmpeg'), meta.streamUrl, tempPath, {
       onChild: (proc) => { if (priority !== 'play') lowerPriority(proc.pid); downloadProcs.set(cleanId, proc); },
     }).catch(() => false);
@@ -1693,11 +1768,30 @@ async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, prior
     downloadProcs.set(cleanId, proc);
     // yt-dlp's reason ("ERROR: ...") goes into the log, so a shared error log says why a song failed
     let errText = '';
+    let progressBuffer = '';
     if (proc.stderr) proc.stderr.on('data', (d) => { errText = (errText + d).slice(-2000); });
+    if (onProgress && proc.stdout) {
+      proc.stdout.on('data', (d) => {
+        progressBuffer += d;
+        let newline;
+        while ((newline = progressBuffer.indexOf('\n')) >= 0) {
+          const line = progressBuffer.slice(0, newline).replace(/\r$/, '');
+          progressBuffer = progressBuffer.slice(newline + 1);
+          const progress = downloadProgressHelper.parseProgressLine(line);
+          if (progress) {
+            try { onProgress(progress); } catch (_) {}
+          }
+        }
+        if (progressBuffer.length > 16384) progressBuffer = progressBuffer.slice(-4096);
+      });
+    }
     proc.on('close', async (code) => {
       if (downloadProcs.get(cleanId) === proc) downloadProcs.delete(cleanId);
       const found = findTemp();
       if (code === 0 && found) {
+        if (onProgress) {
+          try { onProgress({ status: 'finished', percent: 100, speed: 0 }); } catch (_) {}
+        }
         try {
           const stat = await fs.promises.stat(found);
           if (stat.size > 60000) {
@@ -3133,11 +3227,23 @@ function handleLocalCover(req, res, parsedUrl) {
   streamFileToResponse(fs.createReadStream(file), res);
 }
 
-async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3', quality = '0', startParam = null, endParam = null, raw = false, trackId = null, streamUrlParam = null) {
+async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3', quality = '0', startParam = null, endParam = null, raw = false, trackId = null, streamUrlParam = null, progressKeyParam = null) {
   if (!trackUrl && (!title || !artist)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ success: false, error: 'missing track information' }));
   }
+
+  const progressKey = cleanDownloadProgressKey(progressKeyParam);
+  const reportProgress = (patch) => setDownloadProgress(progressKey, patch);
+  const progressFromYtDlp = (p) => reportProgress({
+    phase: p && p.status === 'finished' ? 'converting' : 'downloading',
+    percent: p && Number.isFinite(p.percent) ? p.percent : null,
+    speed: p && Number.isFinite(p.speed) ? p.speed : 0,
+    eta: p && Number.isFinite(p.eta) ? p.eta : null,
+    downloadedBytes: p && Number.isFinite(p.downloadedBytes) ? p.downloadedBytes : null,
+    totalBytes: p && Number.isFinite(p.totalBytes) ? p.totalBytes : null,
+  });
+  reportProgress({ phase: 'starting', percent: null, speed: 0 });
 
   let start = null;
   if (startParam !== null && startParam !== undefined && startParam !== '') {
@@ -3189,7 +3295,11 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
 
   const downloadKey = !isRaw ? JSON.stringify([cleanId || targetUrl, cleanArtist, cleanTitle, ext, safeQuality, start, end]) : null;
   if (downloadKey && downloadInFlight.has(downloadKey)) {
+    reportProgress({ phase: 'waiting', percent: null, speed: 0 });
     const outcome = await downloadInFlight.get(downloadKey);
+    endDownloadProgress(progressKey, outcome.body && outcome.body.success
+      ? { phase: 'done', percent: 100, speed: 0 }
+      : { phase: 'error', speed: 0 });
     res.writeHead(outcome.status, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(outcome.body));
   }
@@ -3200,6 +3310,9 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
   let downloadOutcome = null;
   const sendDownloadResponse = (status, body) => {
     downloadOutcome = { status, body };
+    endDownloadProgress(progressKey, body && body.success
+      ? { phase: 'done', percent: 100, speed: 0 }
+      : { phase: 'error', speed: 0 });
     if (resolveDownload) resolveDownload(downloadOutcome);
     if (!res.writableEnded) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -3217,7 +3330,11 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
     // (YouTube refusing a long "Download all", #29) was skipped without a try for the next minutes, so retrying
     // it failed at once. A retry (fresh=1) also forgets that failure.
     if (/[?&]fresh=1(&|$)/.test(req.url || '')) ytdlpQueue.forget(`dl:${cacheId}`);
-    if (!await findCachedFile(cacheId)) await downloadTrackToDisk(targetUrl, cacheId, 'youtube', { title, artist }, 'normal');
+    if (!await findCachedFile(cacheId)) {
+      reportProgress({ phase: 'downloading', percent: 0, speed: 0 });
+      await downloadTrackToDisk(targetUrl, cacheId, 'youtube', { title, artist, onProgress: progressFromYtDlp }, 'normal');
+    }
+    reportProgress({ phase: 'copying', percent: 100, speed: 0 });
     const cached = await findCachedFile(cacheId);
     if (!cached) return sendDownloadResponse(500, { success: false, error: STREAM_FAILED });
     const savedName = `${cleanArtist} - ${cleanTitle}${path.extname(cached)}`;
@@ -3230,6 +3347,7 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
   if (cachedFile) {
     const ffmpegBin = resolveBinary('ffmpeg');
     if (ffmpegBin) {
+      reportProgress({ phase: 'converting', percent: null, speed: 0 });
       const bitrateMap = { '0': '320k', '2': '256k', '4': '192k', '5': '128k' };
       const bitrate = bitrateMap[safeQuality] || '320k';
       const ffmpegArgs = ['-y'];
@@ -3322,6 +3440,7 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
     '--embed-metadata',
     '-o', tempTemplate,
     '--extractor-args', 'youtube:player_client=default,android',
+    ...downloadProgressHelper.PROGRESS_ARGS,
   ];
   if (canCarryCover) {
     args.push('--embed-thumbnail', '--convert-thumbnails', 'jpg');
@@ -3332,7 +3451,8 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
   args.push('--', targetUrl);
 
   try {
-    await executeYtDlp(args, 180000, { onChild: c => { child = c; }, reason: 'download' });
+    reportProgress({ phase: 'downloading', percent: 0, speed: 0 });
+    await executeYtDlp(args, 180000, { onChild: c => { child = c; }, reason: 'download', onProgress: progressFromYtDlp });
     if (!isRaw) {
       await cleanupDownloadArtifacts(downloadsDir, beforeFiles, baseName, videoId, ext, true);
       downloadsIndex = null;
@@ -3360,6 +3480,7 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
         '--audio-quality', safeQuality,
         '--embed-metadata',
         '-o', tempTemplate,
+        ...downloadProgressHelper.PROGRESS_ARGS,
       ];
       if (canCarryCover) {
         fallbackArgs.push('--embed-thumbnail', '--convert-thumbnails', 'jpg');
@@ -3369,7 +3490,7 @@ async function handleDownload(req, res, trackUrl, title, artist, format = 'mp3',
       }
       fallbackArgs.push('--', targetUrl);
 
-      await executeYtDlp(fallbackArgs, 180000, { onChild: c => { child = c; }, reason: 'download-fallback' });
+      await executeYtDlp(fallbackArgs, 180000, { onChild: c => { child = c; }, reason: 'download-fallback', onProgress: progressFromYtDlp });
       if (!isRaw) {
         await cleanupDownloadArtifacts(downloadsDir, beforeFiles, baseName, videoId, ext, true);
         downloadsIndex = null;
@@ -6325,7 +6446,18 @@ const server = http.createServer(guardHandler(async (req, res) => {
       const n = parseFloat(parsedUrl.query.end);
       if (!isNaN(n)) end = Math.max(0, n);
     }
-    return handleDownload(req, res, trackUrl, title, artist, format, quality, start, end, raw, trackId, streamUrl);
+    const progressKey = parsedUrl.query.progressKey || parsedUrl.query.progress || '';
+    return handleDownload(req, res, trackUrl, title, artist, format, quality, start, end, raw, trackId, streamUrl, progressKey);
+  }
+
+  if (parsedUrl.pathname === '/api/download-progress') {
+    const keys = String(parsedUrl.query.keys || parsedUrl.query.key || '')
+      .split(',')
+      .map((key) => cleanDownloadProgressKey(key))
+      .filter(Boolean)
+      .slice(0, 20);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ success: true, progress: getDownloadProgress(keys) }));
   }
 
   if (parsedUrl.pathname === '/api/tmp-file') {
@@ -6542,6 +6674,8 @@ const server = http.createServer(guardHandler(async (req, res) => {
     req.on('data', chunk => { if (res.writableEnded) return; body += chunk; if (body.length > MAX_BODY_BYTES) { body = ''; req.removeAllListeners('data'); req.removeAllListeners('end'); res.writeHead(413, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, error: 'payload too large' })); req.resume(); } });
     req.on('end', async () => {
       const payload = safeJsonParse(body, {});
+      // the app asks for this after changing the Downloads folder: the old index belonged to the old folder
+      if (payload.refresh) downloadsIndex = null;
       const tracks = (Array.isArray(payload.tracks) ? payload.tracks : []).slice(0, 500);
       try {
         const downloaded = await Promise.all(tracks.map(async (t) => {

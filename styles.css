@@ -1516,6 +1516,41 @@ body.perf .my-wave-ambient-light {
   flex: 1;
   min-width: 0;
 }
+.track-row-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.track-row-title-line .track-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.track-downloaded-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--md-sys-color-primary);
+  vertical-align: middle;
+  user-select: none;
+}
+.track-downloaded-badge svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.track-downloaded-badge.hidden {
+  display: none !important;
+}
+.track-row-downloaded {
+  width: 14px;
+  height: 14px;
+  opacity: 0.9;
+}
 .track-row-title {
   display: block;
   max-width: 100%;
@@ -2436,6 +2471,16 @@ body.m3-cover-on .artwork-wrapper {
   flex: 1;
   padding-right: 6px;
   overflow: hidden;
+}
+.track-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.track-title-line .track-title-marquee {
+  flex: 1;
+  min-width: 0;
 }
 .track-title-marquee {
   white-space: nowrap;
@@ -3805,10 +3850,13 @@ body.perf #sleep-timer-status.active::before {
   max-width: 560px !important;
   padding: 28px !important;
   border-radius: 28px !important;
-  border: none !important;
-  box-shadow: none !important;
+  border: 1px solid var(--md-sys-color-outline-variant) !important;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.38) !important;
   font-size: calc(15px * var(--font-scale, 1)) !important;
-  background: var(--md-sys-color-surface-container) !important;
+  /* the solid token is the same palette colour without the UI transparency, so the buttons stay readable */
+  background: var(--md-sys-color-surface-container-solid) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   box-sizing: border-box;
 }
 
@@ -3835,7 +3883,7 @@ body.perf #sleep-timer-status.active::before {
   display: flex;
   align-items: center;
   gap: 16px;
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-sys-color-surface-container-high-solid);
   border: none;
   border-radius: 16px;
   padding: 12px 16px;
@@ -3854,7 +3902,7 @@ body.perf #sleep-timer-status.active::before {
   width: 56px;
   height: 56px;
   border-radius: 12px;
-  background: var(--md-sys-color-surface-container-highest);
+  background: var(--md-sys-color-surface-container-highest-solid);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3870,6 +3918,16 @@ body.perf #sleep-timer-status.active::before {
   flex: 1;
 }
 
+.download-preview-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.download-preview-title-line .download-preview-title {
+  flex: 1;
+  min-width: 0;
+}
 .download-preview-title {
   font-size: calc(16px * var(--font-scale, 1));
   font-weight: 600;
@@ -3919,7 +3977,7 @@ body.perf #sleep-timer-status.active::before {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-sys-color-surface-container-high-solid);
   border: none;
   border-radius: 14px;
   color: var(--md-sys-color-on-surface-variant);
@@ -3957,7 +4015,7 @@ body.perf #sleep-timer-status.active::before {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-sys-color-surface-container-high-solid);
   border: none;
   border-radius: 14px;
   color: var(--md-sys-color-on-surface-variant);
@@ -4010,7 +4068,7 @@ body.perf #sleep-timer-status.active::before {
   border-radius: 16px;
   padding: 0 16px;
   box-sizing: border-box;
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-sys-color-surface-container-high-solid);
   border: 1px solid transparent;
   color: var(--md-sys-color-on-surface);
   font-size: calc(15px * var(--font-scale, 1));
@@ -4051,7 +4109,7 @@ body.perf #sleep-timer-status.active::before {
   width: 52px;
   height: 32px;
   border-radius: 16px;
-  background: var(--md-sys-color-surface-container-highest);
+  background: var(--md-sys-color-surface-container-highest-solid);
   border: 2px solid var(--md-sys-color-outline);
   position: relative;
   cursor: pointer;
@@ -4156,6 +4214,216 @@ body.perf #sleep-timer-status.active::before {
   opacity: 0.85;
 }
 
+/* progress while a download runs: the format/quality choices step aside, the dialog becomes a status view */
+#download-modal.is-downloading #dl-pane-download .download-section,
+#download-modal.is-downloading .dl-mode-tabs {
+  display: none;
+}
+#download-modal.is-downloading #btn-confirm-download,
+#download-modal.is-downloading #download-spinner {
+  display: none !important;
+}
+
+.download-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 24px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--md-sys-color-surface-container-high-solid);
+}
+.download-progress.hidden {
+  display: none !important;
+}
+.download-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.download-progress-label {
+  font-size: calc(15px * var(--font-scale, 1));
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-progress-pct {
+  font-size: calc(15px * var(--font-scale, 1));
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.download-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 16%, transparent);
+}
+.download-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--md-sys-color-primary);
+  transition: width 250ms cubic-bezier(0.2, 0, 0, 1);
+}
+.download-progress-track.indeterminate .download-progress-fill {
+  width: 38% !important;
+  animation: downloadProgressSlide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes downloadProgressSlide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(290%); }
+}
+.download-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 16px;
+  font-size: calc(12px * var(--font-scale, 1));
+  color: var(--md-sys-color-outline);
+  font-variant-numeric: tabular-nums;
+}
+.download-progress-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.download-progress-items:empty {
+  display: none;
+}
+.download-progress-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+.download-progress-item-name {
+  font-size: calc(12px * var(--font-scale, 1));
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-progress-item-pct {
+  font-size: calc(12px * var(--font-scale, 1));
+  color: var(--md-sys-color-outline);
+  font-variant-numeric: tabular-nums;
+}
+.download-progress-item .download-progress-track {
+  grid-column: 1 / -1;
+  height: 5px;
+}
+
+.download-close-card {
+  width: min(520px, 92vw) !important;
+  max-width: min(520px, 92vw) !important;
+}
+.download-close-message {
+  margin: 0;
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.download-close-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* the compact status card that stays after "Continue in background" */
+.download-mini {
+  position: fixed;
+  right: 22px;
+  bottom: 108px;
+  z-index: 99990;
+  width: min(330px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-solid);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+.download-mini.hidden {
+  display: none !important;
+}
+.download-mini:hover {
+  transform: translateY(-2px);
+}
+.download-mini-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.download-mini-icon {
+  flex-shrink: 0;
+  color: var(--md-sys-color-primary);
+}
+.download-mini-label {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(13px * var(--font-scale, 1));
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-mini-pct {
+  font-size: calc(13px * var(--font-scale, 1));
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.download-mini-cancel {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-sys-color-outline);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.download-mini-cancel:hover {
+  background: color-mix(in srgb, var(--md-sys-color-error) 16%, transparent);
+  color: var(--md-sys-color-error);
+}
+.download-mini-track {
+  height: 6px;
+}
+.download-mini-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 14px;
+  font-size: calc(11px * var(--font-scale, 1));
+  color: var(--md-sys-color-outline);
+  font-variant-numeric: tabular-nums;
+}
+.download-mini-meta span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 600px) {
   .download-modal-actions {
     flex-direction: column;
@@ -4178,6 +4446,17 @@ body.perf #sleep-timer-status.active::before {
   .btn-text-error {
     width: 100%;
     justify-content: center;
+  }
+  .download-close-actions {
+    flex-direction: column-reverse;
+  }
+  .download-close-actions button {
+    width: 100%;
+  }
+  .download-mini {
+    right: 12px;
+    bottom: 96px;
+    width: min(330px, calc(100vw - 24px));
   }
 }
 
@@ -6461,6 +6740,14 @@ body.mini .playbar-left .track-meta {
   gap: 2px !important;
   margin: 0 !important;
   padding: 0 !important;
+}
+body.mini .track-title-line {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+body.mini .track-title-line .track-title-marquee {
+  width: auto !important;
+  flex: 1 !important;
 }
 body.mini .track-title-marquee {
   min-width: 0 !important;
