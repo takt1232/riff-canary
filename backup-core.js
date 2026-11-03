@@ -3,7 +3,7 @@
 // - Playlist files (JSON) are meant to be shared, so reading one trusts nothing: only plain text and numbers are
 //   kept, songs must point at YouTube or SoundCloud (or be a song from this device's library), pictures must be
 //   https, and everything is capped. The format is upstream Riff's, so either app reads the other's files.
-// - A backup is one profile's own localStorage keys. Restoring one only writes Muriel's data and settings keys:
+// - A backup is one profile's own localStorage keys. Restoring one only writes Canary's data and settings keys:
 //   never the device's (profiles-core.js), the sync link, other profiles, logins or custom CSS. Riff's encrypted
 //   account files (.rfacc) are read too: they are the same thing under a fixed, public key.
 (function (root) {
@@ -38,7 +38,7 @@
     return d > 0 && d < 86400 ? Math.round(d) : 0;
   };
 
-  // A song from a shared playlist file -> a Muriel track, or null. A song with only a title and artist is kept
+  // A song from a shared playlist file -> a Canary track, or null. A song with only a title and artist is kept
   // with needsMatch: true; backup.js looks it up on YouTube, like a Spotify import.
   function cleanSharedTrack(t) {
     if (!isObj(t)) return null;
@@ -64,7 +64,7 @@
     return title ? { ...base, ...(thumb ? { thumbnail: thumb } : {}), needsMatch: true } : null;
   }
 
-  // the playlists in a playlist file (Muriel's, Riff's, or a bare list of songs); [] when there are none
+  // the playlists in a playlist file (Canary's, Riff's, or a bare list of songs); [] when there are none
   function parsePlaylistFile(text) {
     if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.fileBytes) return [];
     let data;
@@ -97,7 +97,7 @@
     return out;
   }
 
-  // Muriel playlists -> a playlist file. Songs from this device's files keep only their library id (the file
+  // Canary playlists -> a playlist file. Songs from this device's files keep only their library id (the file
   // itself, its path and the local server's address stay here).
   function exportTrack(t) {
     if (!isObj(t)) return null;
@@ -116,7 +116,7 @@
 
   function playlistFile(playlists, { appVersion = '' } = {}) {
     return {
-      app: 'Muriel',
+      app: 'Canary',
       appVersion: String(appVersion || ''),
       exportedAt: new Date().toISOString(),
       playlists: (playlists || []).filter(isObj).map((p) => {
@@ -131,15 +131,15 @@
   }
 
   // a file name from a playlist or profile name
-  const fileName = (name, ext) => `${clip(name, 60).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '') || 'muriel'}.${ext}`;
+  const fileName = (name, ext) => `${clip(name, 60).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '') || 'canary'}.${ext}`;
 
   // ---------- backups ----------
-  const KEY_RE = /^(?:muriel|devsize)_[A-Za-z0-9_.:-]{1,80}$/;
+  const KEY_RE = /^(?:canary|devsize)_[A-Za-z0-9_.:-]{1,80}$/;
   // never written by a restore, never in a backup: the sync link (and which devices are in it), the profile list,
   // logins, phone logs, and things that only mean something on the device they were made on
-  // (a Riff file also carries its Last.fm login in plain text: Muriel keeps logins in the server's vault instead)
-  const NEVER = [/^muriel_sync_/, /^muriel_p:/, /^muriel_secret_/, /^muriel_profiles?(?:_|$)/, /^muriel_debug_log$/,
-    /^muriel_custom_css/, /^muriel_bg_(?:url|vpath)$/, /^muriel_banner_media$/, /^muriel_lastfm_(?!enabled$)/];
+  // (a Riff file also carries its Last.fm login in plain text: Canary keeps logins in the server's vault instead)
+  const NEVER = [/^canary_sync_/, /^canary_p:/, /^canary_secret_/, /^canary_profiles?(?:_|$)/, /^canary_debug_log$/,
+    /^canary_custom_css/, /^canary_bg_(?:url|vpath)$/, /^canary_banner_media$/, /^canary_lastfm_(?!enabled$)/];
   const neverKey = (k) => NEVER.some((re) => re.test(k));
   function backupKeyAllowed(key, isDevice) {
     if (typeof key !== 'string' || !KEY_RE.test(key) || neverKey(key)) return false;
@@ -153,10 +153,10 @@
   function makeBackup(entries, { profileName = '', appVersion = '', isDevice } = {}) {
     const data = {};
     for (const [k, v] of entries) if (typeof v === 'string' && backupKeyAllowed(k, isDevice)) data[k] = v;
-    return { app: 'Muriel', kind: 'muriel-backup', version: 1, appVersion: String(appVersion || ''), exportedAt: new Date().toISOString(), profile: { name: clip(profileName, 24) }, data };
+    return { app: 'Canary', kind: 'canary-backup', version: 1, appVersion: String(appVersion || ''), exportedAt: new Date().toISOString(), profile: { name: clip(profileName, 24) }, data };
   }
 
-  // A stored track, as the app itself saves it. A restore keeps its own fields (text, numbers, true/false; Muriel
+  // A stored track, as the app itself saves it. A restore keeps its own fields (text, numbers, true/false; Canary
   // tracks are flat), drops anything else, and only lets through addresses a picture or song can come from.
   const URL_FIELDS = new Set(['url', 'thumbnail', 'cover', 'image', 'artworkUrl', 'localThumbnail']);
   function storedUrl(v) {
@@ -210,17 +210,17 @@
     devsize_history: (v) => cleanTrackList(v, 5000),
   };
 
-  // Upstream Riff's localStorage names: riff_x became muriel_x in Muriel (tools/rename-riff.py)
-  const fromRiff = (k) => (typeof k === 'string' && k.startsWith('riff_') ? `muriel_${k.slice(5)}` : k);
+  // Upstream Riff's localStorage names: riff_x became canary_x in Canary (tools/rename-riff.py)
+  const fromRiff = (k) => (typeof k === 'string' && k.startsWith('riff_') ? `canary_${k.slice(5)}` : k);
 
   // A backup file's contents (already parsed) -> what a restore writes. Throws an Error with a message for people.
   function readBackup(obj, { isDevice } = {}) {
-    if (!isObj(obj)) throw new Error("That file isn't a Muriel backup");
+    if (!isObj(obj)) throw new Error("That file isn't a Canary backup");
     let source = '';
     let raw = null;
-    if (obj.kind === 'muriel-backup' && isObj(obj.data)) { source = 'muriel'; raw = obj.data; }
-    else if (isObj(obj.localStorage) && (obj.app === 'Riff' || obj.app === 'Muriel')) { source = 'riff'; raw = obj.localStorage; }
-    if (!raw) throw new Error("That file isn't a Muriel backup or a Riff account file");
+    if (obj.kind === 'canary-backup' && isObj(obj.data)) { source = 'canary'; raw = obj.data; }
+    else if (isObj(obj.localStorage) && (obj.app === 'Riff' || obj.app === 'Canary')) { source = 'riff'; raw = obj.localStorage; }
+    if (!raw) throw new Error("That file isn't a Canary backup or a Riff account file");
     const entries = {};
     const skipped = [];
     let total = 0;
@@ -246,7 +246,7 @@
       source,
       entries,
       skipped,
-      profileName: source === 'muriel' && isObj(obj.profile) ? clip(obj.profile.name, 24) : '',
+      profileName: source === 'canary' && isObj(obj.profile) ? clip(obj.profile.name, 24) : '',
       counts: { playlists: count('devsize_playlists'), favorites: count('devsize_favorites'), history: count('devsize_history'), keys: Object.keys(entries).length },
     };
   }
@@ -296,10 +296,10 @@
   async function parseBackupFile(bytes) {
     if (!bytes || bytes.length > LIMITS.fileBytes) throw new Error('That file is too big');
     if (isRiffAccount(bytes)) return readRiffAccount(bytes);
-    try { return JSON.parse(new TextDecoder().decode(bytes).replace(/^\uFEFF/, '')); } catch (e) { throw new Error("That file isn't a Muriel backup"); }
+    try { return JSON.parse(new TextDecoder().decode(bytes).replace(/^\uFEFF/, '')); } catch (e) { throw new Error("That file isn't a Canary backup"); }
   }
 
   const api = { LIMITS, cleanSharedTrack, parsePlaylistFile, exportTrack, playlistFile, fileName, backupKeyAllowed, keepOnRestore, makeBackup, cleanStoredTrack, cleanStoredPlaylists, readBackup, isRiffAccount, readRiffAccount, parseBackupFile };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.MurielBackup = api;
+  else root.CanaryBackup = api;
 })(typeof window !== 'undefined' ? window : globalThis);

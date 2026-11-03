@@ -1,4 +1,4 @@
-package io.github.cloverscripts.muriel;
+package io.github.takt1232.canary;
 
 import android.os.Bundle;
 

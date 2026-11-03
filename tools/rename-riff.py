@@ -1,5 +1,5 @@
-"""Applies Muriel's Riff->Muriel rename to a checkout. Used to port upstream Riff changes:
-rename an old and a new upstream snapshot the same way, diff them, apply that diff to Muriel."""
+"""Applies Canary's Riff->Canary rename to a checkout. Used to port upstream Riff changes:
+rename an old and a new upstream snapshot the same way, diff them, apply that diff to Canary."""
 import os, re, sys
 
 FILES = ['app.js', 'index.html', 'welcome.html', 'styles.css', 'main.js', 'preload.js', 'platform.js', 'launcher.js',
@@ -9,16 +9,16 @@ FILES = ['app.js', 'index.html', 'welcome.html', 'styles.css', 'main.js', 'prelo
 
 def rename(s):
     s = s.replace("writeString(0, 'RIFF')", "writeString(0, '\x00WAV\x00')").replace('rIfFileNotExist', '\x00RIFNE\x00')
-    s = s.replace('RiffAudioEngine', 'MurielAudioEngine')
-    s = re.sub(r'\bRIFF_', 'MURIEL_', s)
-    s = re.sub(r'\briff_', 'muriel_', s)
-    s = re.sub(r'\briff-', 'muriel-', s)
-    s = re.sub(r'\briff:', 'muriel:', s)
-    s = s.replace('.rifftutorial', '.murieltutorial').replace("'C:\\Riff\\\\", "'C:\\Muriel\\\\")
-    s = s.replace('riff.desktop', 'muriel.desktop').replace('riff.png', 'muriel.png').replace('riffCustom', 'murielCustom')
-    s = s.replace("defineTheme('riff'", "defineTheme('muriel'").replace("setTheme('riff')", "setTheme('muriel')")
-    s = s.replace('Usage: riff lyrics', 'Usage: muriel lyrics')
-    s = re.sub(r'\bRiff\b', 'Muriel', s)
+    s = s.replace('RiffAudioEngine', 'CanaryAudioEngine')
+    s = re.sub(r'\bRIFF_', 'CANARY_', s)
+    s = re.sub(r'\briff_', 'canary_', s)
+    s = re.sub(r'\briff-', 'canary-', s)
+    s = re.sub(r'\briff:', 'canary:', s)
+    s = s.replace('.rifftutorial', '.canarytutorial').replace("'C:\\Riff\\\\", "'C:\\Canary\\\\")
+    s = s.replace('riff.desktop', 'canary.desktop').replace('riff.png', 'canary.png').replace('riffCustom', 'canaryCustom')
+    s = s.replace("defineTheme('riff'", "defineTheme('canary'").replace("setTheme('riff')", "setTheme('canary')")
+    s = s.replace('Usage: riff lyrics', 'Usage: canary lyrics')
+    s = re.sub(r'\bRiff\b', 'Canary', s)
     return s.replace('\x00WAV\x00', 'RIFF').replace('\x00RIFNE\x00', 'rIfFileNotExist')
 
 root = sys.argv[1] if len(sys.argv) > 1 else '.'

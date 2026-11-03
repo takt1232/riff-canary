@@ -1,14 +1,14 @@
 // Profiles: several people on one device, each with their own playlists, favorites, history, Encore stats,
 // queue, look, sound and lyrics settings, and their own Sync group. All of that lives in localStorage, so a
 // profile is simply its own set of keys there: the first profile keeps the plain keys it always had (nothing to
-// migrate), every other profile stores its keys as "muriel_p:<id>:<key>". Loaded before every other script, this
+// migrate), every other profile stores its keys as "canary_p:<id>:<key>". Loaded before every other script, this
 // file makes localStorage show only the open profile, so the rest of the app never has to know. The few keys in
 // DEVICE belong to the device and are shared by every profile. Switching profiles reloads the page.
 // No DOM: profiles.js draws Settings → Profiles and the switcher, test/profiles-core.test.js runs this in Node.
 (function (root) {
-  const LIST = 'muriel_profiles'; // [{ id, name, color, emoji, created }]
-  const ACTIVE = 'muriel_profile_active';
-  const PREFIX = 'muriel_p:';
+  const LIST = 'canary_profiles'; // [{ id, name, color, emoji, created }]
+  const ACTIVE = 'canary_profile_active';
+  const PREFIX = 'canary_p:';
   const FIRST = 'default'; // the profile with the plain keys
 
   // shared by every profile on this device. Hardware acceleration and the music and download folders aren't in
@@ -16,17 +16,17 @@
   const DEVICE = new Set([
     LIST, ACTIVE,
     // the window, the tray and the keyboard belong to the computer
-    'muriel_tray_on_close', 'muriel_global_media_keys', 'muriel_win_global_media_keys', 'muriel_hide_titlebar',
+    'canary_tray_on_close', 'canary_global_media_keys', 'canary_win_global_media_keys', 'canary_hide_titlebar',
     // what this device can handle
-    'muriel_perf_mode', 'muriel_battery_saver', 'muriel_fps_cap', 'muriel_cache_limit_mb', 'muriel_stream_timeout', 'muriel_audio_output_device',
+    'canary_perf_mode', 'canary_battery_saver', 'canary_fps_cap', 'canary_cache_limit_mb', 'canary_stream_timeout', 'canary_audio_output_device',
     // asked, shown or done once per device
-    'muriel_update_found', 'muriel_update_last', 'muriel_update_snooze', 'muriel_welcome_done', 'muriel_bg_asked',
-    'muriel_scale_rebased_v2', 'muriel_debug_log',
+    'canary_update_found', 'canary_update_last', 'canary_update_snooze', 'canary_welcome_done', 'canary_bg_asked',
+    'canary_scale_rebased_v2', 'canary_debug_log',
     // a copy of the open language's translations for a quick start (i18n.js); which language is per profile
-    'muriel_i18n_snap',
+    'canary_i18n_snap',
   ]);
   // how a song sounds, worked out once per device; logins the in-app server keeps for every profile (bridge.js)
-  const DEVICE_PREFIXES = ['muriel_audio_analysis_', 'muriel_secret_'];
+  const DEVICE_PREFIXES = ['canary_audio_analysis_', 'canary_secret_'];
   const isDevice = (k) => DEVICE.has(k) || DEVICE_PREFIXES.some((p) => k.startsWith(p));
 
   const COLORS = ['#D0BCFF', '#A8C7FA', '#7FD8C0', '#C5E1A5', '#FDD663', '#FFB59A', '#F4A7C6', '#B8C4D0'];
@@ -158,7 +158,7 @@
   // Later patches of Storage.prototype (app.js for a full storage, sync.js to notice changes) wrap these, so they
   // see the keys as the app writes them.
   function install(win) {
-    if (win.MurielProfiles) return win.MurielProfiles;
+    if (win.CanaryProfiles) return win.CanaryProfiles;
     let ls;
     try { ls = win.localStorage; } catch (e) { return null; } // storage switched off: nothing to keep apart
     const P = win.Storage && win.Storage.prototype;
@@ -215,7 +215,7 @@
       isDevice,
       COLORS,
     };
-    win.MurielProfiles = api;
+    win.CanaryProfiles = api;
     return api;
   }
 

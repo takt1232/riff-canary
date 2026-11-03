@@ -1,4 +1,4 @@
-package io.github.cloverscripts.muriel;
+package io.github.takt1232.canary;
 
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -15,23 +15,23 @@ import android.os.Looper;
 import androidx.core.app.ServiceCompat;
 
 /**
- * Keeps Muriel in the foreground while a song plays (Android stops background apps to save memory,
+ * Keeps Canary in the foreground while a song plays (Android stops background apps to save memory,
  * which cut the music off) and receives the buttons of the playback notification on Android 12 and
  * older; newer versions call the media session directly. MediaControlsPlugin owns everything else.
  */
 public class PlaybackService extends Service {
-    static final String ACTION_REFRESH = "io.github.cloverscripts.muriel.REFRESH";
-    static final String ACTION_TOGGLE = "io.github.cloverscripts.muriel.TOGGLE";
-    static final String ACTION_NEXT = "io.github.cloverscripts.muriel.NEXT";
-    static final String ACTION_PREV = "io.github.cloverscripts.muriel.PREV";
-    static final String ACTION_DISMISS = "io.github.cloverscripts.muriel.DISMISS";
-    static final String ACTION_SHUFFLE = "io.github.cloverscripts.muriel.SHUFFLE_BUTTON";
-    static final String ACTION_REPEAT = "io.github.cloverscripts.muriel.REPEAT_BUTTON";
+    static final String ACTION_REFRESH = "io.github.takt1232.canary.REFRESH";
+    static final String ACTION_TOGGLE = "io.github.takt1232.canary.TOGGLE";
+    static final String ACTION_NEXT = "io.github.takt1232.canary.NEXT";
+    static final String ACTION_PREV = "io.github.takt1232.canary.PREV";
+    static final String ACTION_DISMISS = "io.github.takt1232.canary.DISMISS";
+    static final String ACTION_SHUFFLE = "io.github.takt1232.canary.SHUFFLE_BUTTON";
+    static final String ACTION_REPEAT = "io.github.takt1232.canary.REPEAT_BUTTON";
     // the Live Update (the island, MediaControlsPlugin.postIsland) was swiped away
-    static final String ACTION_ISLAND_DISMISSED = "io.github.cloverscripts.muriel.ISLAND_DISMISSED";
+    static final String ACTION_ISLAND_DISMISSED = "io.github.takt1232.canary.ISLAND_DISMISSED";
     // set when started with startForegroundService(): Android then insists on startForeground()
     static final String EXTRA_FOREGROUND = "foreground";
-    // Paused, Muriel stays in the foreground this much longer. Android doesn't let an app in the background
+    // Paused, Canary stays in the foreground this much longer. Android doesn't let an app in the background
     // come back into the foreground on its own, so the next song, or the music coming back after a call,
     // would otherwise stay silent (Android 15+ even stops it).
     static final long PAUSED_FOREGROUND_MS = 10 * 60 * 1000;

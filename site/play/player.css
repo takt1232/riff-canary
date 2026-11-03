@@ -1,4 +1,4 @@
-/* Muriel Web Player: plays playlists shared from Muriel. Dark only, like the app's now-playing screen. */
+/* Canary Web Player: plays playlists shared from Canary. Dark only, like the app's now-playing screen. */
 :root {
   --bg: #09090b;
   --card: rgba(255, 255, 255, 0.045);

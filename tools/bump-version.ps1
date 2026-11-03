@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Bumps Muriel's version in package.json, package-lock.json and VERSION.
+  Bumps Canary's version in package.json, package-lock.json and VERSION.
 
 .DESCRIPTION
   The version is MAJOR.MINOR.PATCH:
@@ -113,7 +113,7 @@ try {
     }
 
     Write-Host ''
-    Write-Host "Muriel $current -> $next ($kind)" -ForegroundColor Cyan
+    Write-Host "Canary $current -> $next ($kind)" -ForegroundColor Cyan
 
     if ($DryRun) {
         Write-Host 'Dry run: no files were changed.' -ForegroundColor Yellow

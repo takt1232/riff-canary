@@ -1,11 +1,11 @@
 {
-  "appId": "io.github.cloverscripts.muriel",
-  "appName": "Muriel",
+  "appId": "io.github.takt1232.canary",
+  "appName": "Canary",
   "webDir": "www",
   "backgroundColor": "#121214",
   "ios": {
     "contentInset": "never",
-    "scheme": "Muriel",
+    "scheme": "Canary",
     "limitsNavigationsToAppBoundDomains": false
   },
   "plugins": {

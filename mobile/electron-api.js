@@ -68,7 +68,7 @@ module.exports = function electronAPI({ ready, port, fs, fileUrlFor }) {
       await ready;
       // lossless files take a while to copy; say so, or the app looks stuck
       const total = files.reduce((n, f) => n + f.size, 0);
-      if (total > 20e6 && window.MurielCore) window.MurielCore.toast(`Adding ${files.length} song${files.length === 1 ? '' : 's'}…`, 'info');
+      if (total > 20e6 && window.CanaryCore) window.CanaryCore.toast(`Adding ${files.length} song${files.length === 1 ? '' : 's'}…`, 'info');
       const out = [];
       for (const f of files) {
         const ext = extOf(f.name);
@@ -98,12 +98,12 @@ module.exports = function electronAPI({ ready, port, fs, fileUrlFor }) {
       await fs._flush();
       return true;
     },
-    getDataDir: async () => ({ dir: 'On this iPhone (Files → Muriel)', defaultDir: '/data', isCustom: false }),
+    getDataDir: async () => ({ dir: 'On this iPhone (Files → Canary)', defaultDir: '/data', isCustom: false }),
     pickDataDir: async () => null,
     setDataDir: async () => ({ success: false, error: 'The music folder is fixed on iPhone' }),
-    // fixed on phones (Settings hides Change): Files → Muriel → Downloads on iOS, Music/Muriel on Android (shims/store.js)
+    // fixed on phones (Settings hides Change): Files → Canary → Downloads on iOS, Music/Canary on Android (shims/store.js)
     async getDownloadDir() {
-      if (Capacitor.getPlatform() !== 'android') return { dir: 'Files → Muriel → Downloads', isCustom: false };
+      if (Capacitor.getPlatform() !== 'android') return { dir: 'Files → Canary → Downloads', isCustom: false };
       await ready;
       return { dir: store.downloadsFolder() || "Inside the app (other apps can't see it)", isCustom: false };
     },
@@ -111,7 +111,7 @@ module.exports = function electronAPI({ ready, port, fs, fileUrlFor }) {
     setDownloadDir: async () => ({ success: false }),
     resetDownloadDir: async () => ({ success: true }),
     restartApp: () => location.reload(),
-    getAppVersion: async () => { const b = window.MURIEL_BUILD || {}; return b.version ? `${b.version}${b.run ? ` (build ${b.run})` : ''}` : '1.1.2'; },
+    getAppVersion: async () => { const b = window.CANARY_BUILD || {}; return b.version ? `${b.version}${b.run ? ` (build ${b.run})` : ''}` : '1.1.2'; },
     getHwAccel: async () => true,
     setHwAccel: noop,
     trimMemory: noop,
@@ -128,7 +128,7 @@ module.exports = function electronAPI({ ready, port, fs, fileUrlFor }) {
     // where "Save to Files" / Drive / Mail take it. In a desktop browser (dev harness) it's a plain download.
     async saveTextFile({ defaultName, content } = {}) {
       if (typeof content !== 'string') return { success: false, error: 'Nothing to save' };
-      const name = String(defaultName || 'muriel.json').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'muriel.json';
+      const name = String(defaultName || 'canary.json').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'canary.json';
       if (!Capacitor.isNativePlatform()) {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([content], { type: 'application/json' }));

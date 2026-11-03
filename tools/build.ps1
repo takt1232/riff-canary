@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds Muriel for the Windows desktop and/or Android.
+  Builds Canary for the Windows desktop and/or Android.
 
 .DESCRIPTION
   Desktop  : runs electron-builder and leaves the installer in dist\.
@@ -166,15 +166,15 @@ function Build-Android {
     Invoke-Checked 'npx' @('cap', 'sync', 'android')
 
     Write-Step "Android: building the debug APK (version $appVersion, code $VersionCode)"
-    $env:MURIEL_VERSION_NAME = $appVersion
-    $env:MURIEL_VERSION_CODE = [string]$VersionCode
+    $env:CANARY_VERSION_NAME = $appVersion
+    $env:CANARY_VERSION_CODE = [string]$VersionCode
     Push-Location (Join-Path $root 'android')
     try {
         Invoke-Checked '.\gradlew.bat' @('assembleDebug')
     } finally {
         Pop-Location
-        Remove-Item Env:\MURIEL_VERSION_NAME -ErrorAction SilentlyContinue
-        Remove-Item Env:\MURIEL_VERSION_CODE -ErrorAction SilentlyContinue
+        Remove-Item Env:\CANARY_VERSION_NAME -ErrorAction SilentlyContinue
+        Remove-Item Env:\CANARY_VERSION_CODE -ErrorAction SilentlyContinue
     }
 
     $apk = Join-Path $root 'android\app\build\outputs\apk\debug\app-debug.apk'

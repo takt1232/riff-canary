@@ -1,9 +1,9 @@
 {
-  "name": "muriel",
+  "name": "canary",
   "version": "1.3.12",
   "main": "main.js",
   "bin": {
-    "muriel": "./cli.js"
+    "canary": "./cli.js"
   },
   "scripts": {
     "start": "electron .",
@@ -14,9 +14,9 @@
     "release:major": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/bump-version.ps1 -Part major"
   },
   "keywords": [],
-  "author": "cloverscripts",
+  "author": "takt1232",
   "license": "MIT",
-  "description": "Muriel - a lightweight music player.",
+  "description": "Canary - a lightweight music player.",
   "devDependencies": {
     "@capacitor/android": "^8.5.3",
     "@capacitor/app": "^8.1.2",
@@ -40,18 +40,18 @@
     "hls.js": "^1.7.1",
     "tone": "^15.1.22"
   },
-  "productName": "Muriel",
-  "homepage": "https://github.com/cloverscripts/riff-muriel",
+  "productName": "Canary",
+  "homepage": "https://github.com/takt1232/riff-muriel",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cloverscripts/riff-muriel.git"
+    "url": "git+https://github.com/takt1232/riff-muriel.git"
   },
   "bugs": {
-    "url": "https://github.com/cloverscripts/riff-muriel/issues"
+    "url": "https://github.com/takt1232/riff-muriel/issues"
   },
   "build": {
-    "appId": "io.github.cloverscripts.muriel",
-    "productName": "Muriel",
+    "appId": "io.github.takt1232.canary",
+    "productName": "Canary",
     "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist"
@@ -127,7 +127,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "cloverscripts",
+        "owner": "takt1232",
         "repo": "riff-muriel",
         "releaseType": "release"
       }

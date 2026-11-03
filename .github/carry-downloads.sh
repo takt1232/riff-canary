@@ -7,9 +7,9 @@
 set -u
 tag="$1"; file="$2"; seed="${3:-0}"
 # the REST API, like the website (`gh release view --json` would call the count downloadCount)
-filter='((((.body // "") | capture("muriel-downloads-before: (?<n>[0-9]+)") | .n | tonumber)) // $seed)
+filter='((((.body // "") | capture("canary-downloads-before: (?<n>[0-9]+)") | .n | tonumber)) // $seed)
   + ([.assets[] | select(.name == $file) | (.downloadCount // .download_count // 0)] | add // 0)'
-total="$(gh api "repos/${GITHUB_REPOSITORY:-cloverscripts/riff-muriel}/releases/tags/$tag" 2>/dev/null | jq -r --arg file "$file" --argjson seed "$seed" "$filter" 2>/dev/null || true)"
+total="$(gh api "repos/${GITHUB_REPOSITORY:-takt1232/riff-muriel}/releases/tags/$tag" 2>/dev/null | jq -r --arg file "$file" --argjson seed "$seed" "$filter" 2>/dev/null || true)"
 case "$total" in ''|*[!0-9]*) total="$seed" ;; esac
 echo "carry-downloads: $tag $file: $total so far" >&2
 echo "$total"

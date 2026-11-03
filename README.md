@@ -1,10 +1,11 @@
-# Muriel
+# Canary
 
 A lightweight desktop music player for Windows, Linux and macOS. Stream from YouTube, YouTube Music and SoundCloud, download for offline listening, and keep a local library — no account, no subscription.
 
-Muriel is based on [Riff](https://github.com/rootscripts/riff) by rootscripts (MIT).
+Canary is a fork of [Muriel](https://github.com/cloverscripts/riff-muriel), which is based on
+[Riff](https://github.com/rootscripts/riff) by rootscripts (MIT).
 
-> Muriel is an independent, non-commercial open-source project and is not affiliated with YouTube, Google,
+> Canary is an independent, non-commercial open-source project and is not affiliated with YouTube, Google,
 > SoundCloud, Spotify or Apple. It hosts no music. Use it for private listening and only download music you
 > have the right to. See [LEGAL.md](LEGAL.md) (also for rights holders).
 
@@ -15,7 +16,7 @@ Muriel is based on [Riff](https://github.com/rootscripts/riff) by rootscripts (M
 - **Lyrics** — online synced lyrics, LRC files, manual timing, fullscreen karaoke
 - **Audio** — EQ, presets, real-time speed, reverb, and a small editor for trimming and exporting clips
 - **Compact layout** — slim navigation rail, slide-over drawer for now playing, lyrics and the queue
-- **Custom background** — image, GIF or video, with optional glass blur on the interface; pauses while Muriel is hidden
+- **Custom background** — image, GIF or video, with optional glass blur on the interface; pauses while Canary is hidden
 - **Performance settings** — lightweight thumbnails, blur on/off, visualizer frame-rate cap, memory trimming in the background, hardware acceleration toggle
 
 ## Getting started
@@ -23,7 +24,7 @@ Muriel is based on [Riff](https://github.com/rootscripts/riff) by rootscripts (M
 Requires Node.js 18 or newer.
 
 ```bash
-git clone https://github.com/cloverscripts/riff-muriel.git
+git clone https://github.com/takt1232/riff-muriel.git
 cd riff-muriel
 npm install
 npm start
@@ -35,7 +36,7 @@ npm start
 npm run dist
 ```
 
-Installers land in `dist/`. Builds are unsigned: on macOS, right-click Muriel in Applications and choose Open; if macOS says the app is damaged, run `xattr -cr /Applications/Muriel.app`.
+Installers land in `dist/`. Builds are unsigned: on macOS, right-click Canary in Applications and choose Open; if macOS says the app is damaged, run `xattr -cr /Applications/Canary.app`.
 
 ## Tools
 
@@ -64,7 +65,7 @@ Options:
 
 Outputs:
 
-- Desktop: `dist\muriel-<version>-win-x64.exe` (the same as `npm run dist`)
+- Desktop: `dist\canary-<version>-win-x64.exe` (the same as `npm run dist`)
 - Android: `android\app\build\outputs\apk\debug\app-debug.apk`
 
 Android builds need JDK 21, but you don't have to install it yourself: `android/settings.gradle` and `android/gradle/gradle-daemon-jvm.properties` let Gradle download and use the right JDK automatically on the first build (cached in `%USERPROFILE%\.gradle\jdks`). iOS builds are not part of this script.
@@ -88,15 +89,18 @@ It only edits files: it does not commit, tag or push. The same bump is available
 
 ## Data
 
-- Windows: `%LOCALAPPDATA%\Muriel`
-- macOS: `~/Library/Application Support/Muriel`
-- Linux: `~/.cache/muriel` (settings in `~/.config/muriel`)
+- Windows: `%LOCALAPPDATA%\Canary`
+- macOS: `~/Library/Application Support/Canary`
+- Linux: `~/.cache/canary` (settings in `~/.config/canary`)
+
+Canary starts fresh: settings, profiles, history and other local data from Muriel are not imported. The
+repository keeps the name `riff-muriel` for now.
 
 ## Legal
 
-Muriel is a player: it doesn't host, upload or sell music, has no ads, accounts or tracking, and nobody earns
+Canary is a player: it doesn't host, upload or sell music, has no ads, accounts or tracking, and nobody earns
 money from it. You're responsible for using it in line with copyright and the terms of the services you use.
-Rights holders can reach us through a [rights holder request](https://github.com/cloverscripts/riff-muriel/issues/new?template=rights-holder-request.yml).
+Rights holders can reach us through a [rights holder request](https://github.com/takt1232/riff-muriel/issues/new?template=rights-holder-request.yml).
 Details, also in German: [LEGAL.md](LEGAL.md).
 
 ## License

@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
 
-  class MurielAudioEngine {
+  class CanaryAudioEngine {
     constructor() {
       this.ctx = null;
       this.mediaSource = null;
@@ -826,6 +826,6 @@
     }
   }
 
-  global.MurielAudioEngine = MurielAudioEngine;
+  global.CanaryAudioEngine = CanaryAudioEngine;
 
 })(typeof window !== 'undefined' ? window : globalThis);

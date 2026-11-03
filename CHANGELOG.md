@@ -1,6 +1,15 @@
 # Changelog
 
-Notable changes to Muriel. Versions follow [Semantic Versioning](https://semver.org/).
+Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
+
+## Unreleased — renamed to Canary
+
+### Changed
+
+- The app is now Canary. The package and bundle IDs moved to `io.github.takt1232.canary`,
+  and the custom URL scheme is `canary://`.
+- Canary starts fresh: settings, profiles, history and other local data from Muriel are not
+  imported. On phones this is a separate app and needs a fresh install.
 
 ## 1.3.12 — 2026-11-03
 
@@ -19,9 +28,9 @@ Notable changes to Muriel. Versions follow [Semantic Versioning](https://semver.
   while the next song is being loaded — released 2 seconds after playback
   starts or pauses, and expiring after 3 minutes instead of 30 if the page
   stops reporting. This removes the long wake-lock time that made the phone's
-  battery screen report Muriel as an app that keeps the system awake.
+  battery screen report Canary as an app that keeps the system awake.
 
 ## Earlier versions
 
 Release notes for 1.3.10 and older are on the
-[releases page](https://github.com/cloverscripts/riff-muriel/releases).
+[releases page](https://github.com/takt1232/riff-muriel/releases).

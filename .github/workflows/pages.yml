@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${{ github.repository }}/releases?per_page=100" --jq '[.[] | {tag_name, body: ((.body // "") | capture("(?<m>muriel-downloads-before:\\s*\\d+)").m // ""), draft, prerelease, published_at, assets: [.assets[] | {name, size, download_count, browser_download_url}]}]' > releases.json
+          gh api "repos/${{ github.repository }}/releases?per_page=100" --jq '[.[] | {tag_name, body: ((.body // "") | capture("(?<m>canary-downloads-before:\\s*\\d+)").m // ""), draft, prerelease, published_at, assets: [.assets[] | {name, size, download_count, browser_download_url}]}]' > releases.json
           stars=$(gh api "repos/${{ github.repository }}" --jq .stargazers_count)
           jq -n --slurpfile r releases.json --argjson s "$stars" --arg at "$(date -u +%FT%TZ)" '{at: $at, stars: $s, releases: $r[0]}' > site/stats.json
       - uses: actions/upload-pages-artifact@v3

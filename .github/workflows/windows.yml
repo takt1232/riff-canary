@@ -1,6 +1,6 @@
 name: Windows build
 
-# Builds a portable Muriel.exe (no installer, runs from anywhere) and publishes it to the
+# Builds a portable Canary.exe (no installer, runs from anywhere) and publishes it to the
 # rolling "windows-latest" release.
 on:
   push:
@@ -37,14 +37,14 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           node tools/build-info.mjs build-info.js windows
-          npx electron-builder --win portable --x64 --publish never -c.artifactName='Muriel.${ext}'
+          npx electron-builder --win portable --x64 --publish never -c.artifactName='Canary.${ext}'
           ls -la dist
-          cp dist/Muriel.exe Muriel.exe
+          cp dist/Canary.exe Canary.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Muriel-exe
-          path: Muriel.exe
+          name: Canary-exe
+          path: Canary.exe
 
       - name: Publish to the windows-latest release
         if: github.ref == 'refs/heads/main'
@@ -57,12 +57,12 @@ jobs:
           head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           if [ "$head" != "$GITHUB_SHA" ]; then echo "main is at ${head::7} now; not publishing ${GITHUB_SHA::7}"; exit 0; fi
           # downloads so far, kept across builds (GitHub resets the count when the file is replaced; the
-          # website adds this to the new file's count). 6 = downloads counted before this existed
-          before="$(bash .github/carry-downloads.sh windows-latest Muriel.exe 6)"
+          # website adds this to the new file's count). 0 = Canary starts counting from scratch
+          before="$(bash .github/carry-downloads.sh windows-latest Canary.exe 0)"
           ver="$(node -p "require('./package.json').version")"
           gh release delete windows-latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create windows-latest Muriel.exe \
+          gh release create windows-latest Canary.exe \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Muriel for Windows (latest build)" \
-            --notes "Muriel $ver. Portable build of ${GITHUB_SHA::7} (run ${{ github.run_number }}). No install needed: download Muriel.exe and run it. Windows SmartScreen may warn because the exe is unsigned: More info -> Run anyway.<!-- muriel-downloads-before: $before --><!-- muriel-version: $ver -->"
+            --title "Canary for Windows (latest build)" \
+            --notes "Canary $ver. Portable build of ${GITHUB_SHA::7} (run ${{ github.run_number }}). No install needed: download Canary.exe and run it. Windows SmartScreen may warn because the exe is unsigned: More info -> Run anyway.<!-- canary-downloads-before: $before --><!-- canary-version: $ver -->"

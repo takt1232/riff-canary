@@ -8,8 +8,8 @@
 // DOMContentLoaded, which hasn't fired yet when this script runs.
 (() => {
   // desktop's default text scale (1.25x) is sized for a monitor; phones start at 1.0x unless the user picked one
-  if (!localStorage.getItem('muriel_font_scale')) localStorage.setItem('muriel_font_scale', '80');
-  const Engine = window.MurielAudioEngine;
+  if (!localStorage.getItem('canary_font_scale')) localStorage.setItem('canary_font_scale', '80');
+  const Engine = window.CanaryAudioEngine;
   if (!Engine) return;
   Engine.prototype.init = function (audioElement) { this.__element = audioElement || this.__element; };
   // iOS ignores element.volume (hardware buttons own it); mute still works
@@ -84,15 +84,15 @@
       return url || u;
     };
     let bgChanged = false;
-    for (const key of ['muriel_bg_url', 'muriel_banner_media', 'muriel_app_icon']) {
+    for (const key of ['canary_bg_url', 'canary_banner_media', 'canary_app_icon']) {
       const cur = localStorage.getItem(key);
       if (!cur) continue;
       const next = await fresh(cur);
-      if (next !== cur) { localStorage.setItem(key, next); if (key === 'muriel_bg_url') bgChanged = true; }
+      if (next !== cur) { localStorage.setItem(key, next); if (key === 'canary_bg_url') bgChanged = true; }
     }
     let artOk = true;
     try {
-      const art = JSON.parse(localStorage.getItem('muriel_track_art') || '{}');
+      const art = JSON.parse(localStorage.getItem('canary_track_art') || '{}');
       let dirty = false;
       for (const v of Object.values(art)) {
         for (const f of ['cover', 'banner']) {
@@ -101,21 +101,21 @@
           if (next !== v[f]) { v[f] = next; dirty = true; }
         }
       }
-      if (dirty) localStorage.setItem('muriel_track_art', JSON.stringify(art));
+      if (dirty) localStorage.setItem('canary_track_art', JSON.stringify(art));
     } catch (e) { artOk = false; }
-    localStorage.removeItem('muriel_bg_vpath');
-    if (bgChanged) window.MurielCore.refreshBackground();
+    localStorage.removeItem('canary_bg_vpath');
+    if (bgChanged) window.CanaryCore.refreshBackground();
     if (artOk && api.pruneMedia) api.pruneMedia(keep);
   };
-  if (window.MurielCore) fixPickedMedia(); else window.addEventListener('muriel:ready', fixPickedMedia, { once: true });
+  if (window.CanaryCore) fixPickedMedia(); else window.addEventListener('canary:ready', fixPickedMedia, { once: true });
 
   // phones default to word-by-word karaoke (the Line/Word button still switches)
   const preferWordLyrics = () => {
-    const st = window.MurielCore && window.MurielCore.state;
+    const st = window.CanaryCore && window.CanaryCore.state;
     const btn = document.getElementById('btn-lyrics-mode');
-    if (st && btn && st.lyricsMode === 'line' && localStorage.getItem('muriel_adv_karaoke_words') !== 'false') btn.click();
+    if (st && btn && st.lyricsMode === 'line' && localStorage.getItem('canary_adv_karaoke_words') !== 'false') btn.click();
   };
-  if (window.MurielCore) preferWordLyrics(); else window.addEventListener('muriel:ready', preferWordLyrics, { once: true });
+  if (window.CanaryCore) preferWordLyrics(); else window.addEventListener('canary:ready', preferWordLyrics, { once: true });
 
   // lyrics tools (edit / sync / translate / fullscreen) move up next to the Line/Word button,
   // so the lyrics get that row back; same buttons, so their handlers keep working
@@ -202,7 +202,7 @@
   const aboutGroup = document.querySelector('.settings-section[data-cat="about"] .m3-group');
   if (storageGroup) {
     const limits = [['1024', '1 GB'], ['2048', '2 GB'], ['5120', '5 GB'], ['10240', '10 GB']];
-    const current = localStorage.getItem('muriel_cache_limit_mb') || '2048';
+    const current = localStorage.getItem('canary_cache_limit_mb') || '2048';
     const limitRow = document.createElement('div');
     limitRow.className = 'setting-item';
     limitRow.innerHTML = `
@@ -216,10 +216,10 @@
         ${limits.map(([v, l]) => `<button class="fps-cap-btn${v === current ? ' active' : ''}" data-limit="${v}">${l}</button>`).join('')}
       </div>`;
     limitRow.querySelectorAll('[data-limit]').forEach((b) => b.addEventListener('click', () => {
-      localStorage.setItem('muriel_cache_limit_mb', b.dataset.limit);
+      localStorage.setItem('canary_cache_limit_mb', b.dataset.limit);
       limitRow.querySelectorAll('[data-limit]').forEach((x) => x.classList.toggle('active', x === b));
       // a lower limit applies now, not only after the next download
-      if (window.MurielCache) window.MurielCache.enforceLimit();
+      if (window.CanaryCache) window.CanaryCache.enforceLimit();
     }));
     const logRow = document.createElement('div');
     logRow.className = 'setting-item';
@@ -232,8 +232,8 @@
         <button class="btn-pill-primary" type="button" data-i18n>Share</button>
       </div>`;
     logRow.querySelector('button').addEventListener('click', async () => {
-      const res = await window.electronAPI.shareText('Muriel error log', window.MurielLog ? window.MurielLog.text() : 'no log');
-      if (res === 'copied' && window.MurielCore) window.MurielCore.toast((window.MurielI18n || { T: (x) => x, Tm: (x) => x }).Tm('Log copied to clipboard'), 'info');
+      const res = await window.electronAPI.shareText('Canary error log', window.CanaryLog ? window.CanaryLog.text() : 'no log');
+      if (res === 'copied' && window.CanaryCore) window.CanaryCore.toast((window.CanaryI18n || { T: (x) => x, Tm: (x) => x }).Tm('Log copied to clipboard'), 'info');
     });
     storageGroup.append(limitRow);
     if (aboutGroup) aboutGroup.insertBefore(logRow, aboutGroup.lastElementChild); else storageGroup.append(logRow);
@@ -248,8 +248,8 @@
   // the phone's own playback rows go to Tracks → Playback
   const playbackGroup = document.querySelector('.m3-group[data-group="playback"]');
   const addPlaybackRow = (row) => { if (playbackGroup) playbackGroup.append(row); else trRow.parentElement.insertBefore(row, trRow); };
-  if (window.MurielLiveActivity && trRow) {
-    const la = window.MurielLiveActivity;
+  if (window.CanaryLiveActivity && trRow) {
+    const la = window.CanaryLiveActivity;
     const row = document.createElement('div');
     row.className = 'setting-item';
     row.innerHTML = `
@@ -267,21 +267,21 @@
       la.setEnabled(on);
     });
     la.available().then((ok) => {
-      if (!ok) row.querySelector('.la-hint').textContent = 'Turn on Live Activities for Muriel in the iPhone Settings app first (needs iOS 16.2 or newer).';
+      if (!ok) row.querySelector('.la-hint').textContent = 'Turn on Live Activities for Canary in the iPhone Settings app first (needs iOS 16.2 or newer).';
     });
     addPlaybackRow(row);
   }
 
-  // Android: let Muriel off battery optimization so the phone doesn't stop it in the background (media-controls.js)
-  if (window.MurielBackground && trRow) {
-    const bg = window.MurielBackground;
+  // Android: let Canary off battery optimization so the phone doesn't stop it in the background (media-controls.js)
+  if (window.CanaryBackground && trRow) {
+    const bg = window.CanaryBackground;
     const row = document.createElement('div');
     row.className = 'setting-item';
     row.innerHTML = `
       <div class="setting-item-top" style="align-items: center;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
           <span class="setting-name" data-i18n>Play in the background</span>
-          <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);" data-i18n>Some phones stop apps to save battery, even while music plays. Allow Muriel to keep running.</span>
+          <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);" data-i18n>Some phones stop apps to save battery, even while music plays. Allow Canary to keep running.</span>
         </div>
         <button class="btn-pill-primary" type="button" data-i18n>Allow</button>
       </div>`;
@@ -297,13 +297,13 @@
   // Android: the song in the island at the top of the screen, as an Android 16 live update (media-controls.js).
   // vivo's Origin Island and OPPO's Fluid Cloud only take music apps on their maker's list; a live update they take
   // from any app. Xiaomi's Super Island and Samsung's Now Bar show the playback notification already: no row there.
-  if (window.MurielIsland && trRow) {
-    const isl = window.MurielIsland;
+  if (window.CanaryIsland && trRow) {
+    const isl = window.CanaryIsland;
     isl.status().then((s) => {
       if (!s.vendor || s.vendor === 'xiaomi' || s.vendor === 'samsung' || (!s.supported && s.vendor !== 'vivo')) return;
       const name = { vivo: 'Origin Island', oplus: 'Fluid Cloud' }[s.vendor] || 'Song in the status bar';
       const about = {
-        vivo: 'The song in the Origin Island at the top of the screen. vivo’s music capsule only takes apps on vivo’s list, so Muriel shows there as a live update.',
+        vivo: 'The song in the Origin Island at the top of the screen. vivo’s music capsule only takes apps on vivo’s list, so Canary shows there as a live update.',
         oplus: 'The song in Fluid Cloud at the top of the screen, as a live update.',
       }[s.vendor] || 'The song as a live update in the status bar.';
       const row = document.createElement('div');
@@ -330,10 +330,10 @@
         const on = isl.enabled(st);
         sw.classList.toggle('active', on);
         let need = '';
-        if (on && !st.notifications) { need = ' Allow Muriel’s notifications for it.'; fix.textContent = 'Allow'; }
+        if (on && !st.notifications) { need = ' Allow Canary’s notifications for it.'; fix.textContent = 'Allow'; }
         else if (on && !st.promoted) {
-          need = st.vendor === 'oplus' ? ' Turn on “Show Live Updates on Live Alerts” for Muriel in the phone’s settings.'
-            : ' Live updates are turned off for Muriel in the phone’s settings.';
+          need = st.vendor === 'oplus' ? ' Turn on “Show Live Updates on Live Alerts” for Canary in the phone’s settings.'
+            : ' Live updates are turned off for Canary in the phone’s settings.';
           fix.textContent = 'Settings';
         }
         hint.textContent = about + need;
@@ -363,9 +363,9 @@
 // a write to the phone's storage failed (usually: storage full); say so instead of losing it silently
 (() => {
   let last = 0;
-  window.addEventListener('muriel:storage-error', () => {
-    if (Date.now() - last < 30000 || !window.MurielCore || !window.MurielCore.toast) return;
+  window.addEventListener('canary:storage-error', () => {
+    if (Date.now() - last < 30000 || !window.CanaryCore || !window.CanaryCore.toast) return;
     last = Date.now();
-    window.MurielCore.toast((window.MurielI18n || { T: (x) => x, Tm: (x) => x }).Tm('Could not save to storage. Is your phone full?'), 'error');
+    window.CanaryCore.toast((window.CanaryI18n || { T: (x) => x, Tm: (x) => x }).Tm('Could not save to storage. Is your phone full?'), 'error');
   });
 })();

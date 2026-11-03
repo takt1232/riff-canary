@@ -28,7 +28,7 @@ function loadLogger(audio) {
   const ctx = {
     el: { nativeAudio: audio }, state: { loadToken: 7 }, hlsInstance: null, URL,
     console: { warn: (l) => logged.push(['console', l]) },
-    window: { __riffLogError: (level, line) => logged.push([level, line]) },
+    window: { __canaryLogError: (level, line) => logged.push([level, line]) },
   };
   vm.runInNewContext(`${fnSource('describeMediaState')}\n${fnSource('logPlaybackIssue')}\nthis.log = logPlaybackIssue;`, ctx);
   return { log: ctx.log, logged };
