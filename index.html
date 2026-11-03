@@ -1409,6 +1409,15 @@
                 </div>
               </div>
             </div>
+            <div class="setting-item" id="setting-disconnect-output-row" hidden>
+              <div class="setting-item-top" style="align-items: center;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span class="setting-name">Keep playing when headphones disconnect</span>
+                  <span class="setting-hint">Bluetooth or wired headphones or speakers: keep playing on the speakers instead of pausing when they disconnect</span>
+                </div>
+                <button type="button" class="effect-switch-btn" id="btn-keep-playing-disconnect"><span class="thumb"></span></button>
+              </div>
+            </div>
             <div class="setting-item">
               <div class="setting-item-top" style="align-items: center;">
                 <span class="setting-name">Smooth preset transitions</span>
@@ -3643,6 +3652,7 @@
   <script src="library-pages.js"></script>
   <script src="build-info.js"></script>
   <script src="share-link.js"></script>
+  <script src="audio-route.js"></script>
   <script src="app.js"></script>
   <script src="update-notifier.js"></script>
   <script src="lyrics-match.js"></script>

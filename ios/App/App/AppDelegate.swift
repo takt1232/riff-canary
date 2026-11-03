@@ -102,6 +102,16 @@ public class CanaryAudioSessionPlugin: CAPPlugin, CAPBridgedPlugin {
                 break
             }
         }
+        // Headphones pulled out or a Bluetooth device disconnected: iOS calls this "old device unavailable".
+        // The page (mobile/audio-interruption.js) pauses unless the "keep playing" setting is on.
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self = self,
+                  let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+            if reason == .oldDeviceUnavailable {
+                self.notifyListeners("routeChange", data: ["reason": "oldDeviceUnavailable"])
+            }
+        }
     }
 
     // once the song plays again iOS keeps the app running by itself; this only bridges the moment until then

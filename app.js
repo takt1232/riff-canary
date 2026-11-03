@@ -5478,12 +5478,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ---- Settings > Tracks > Output device (from Riff 43.1; computers) ----
   // The song plays through the Web Audio graph when it is set up and through the <audio> element before that,
-  // so both get the device. A device that disappears while it plays (headphones unplugged) pauses the song
-  // instead of letting it go on from the speakers.
+  // so both get the device. A device that disappears while it plays (headphones unplugged, Bluetooth gone)
+  // pauses the song instead of letting it go on from the speakers, unless "Keep playing when headphones
+  // disconnect" is on.
   const OUTPUT_DEVICE_KEY = 'canary_audio_output_device';
+  const KEEP_PLAYING_DISCONNECT_KEY = 'canary_keep_playing_on_disconnect';
   const canPickOutput = !isPhoneApp && !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) && !!el.nativeAudio && typeof el.nativeAudio.setSinkId === 'function';
+  const canWatchOutputs = !isPhoneApp && !!(navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function' && typeof navigator.mediaDevices.addEventListener === 'function');
   let outputDeviceId = (() => { try { return localStorage.getItem(OUTPUT_DEVICE_KEY) || ''; } catch (e) { return ''; } })();
-  let knownOutputIds = null;
+  let knownOutputDevices = [];
+  const keepPlayingOnDisconnect = () => {
+    try { return localStorage.getItem(KEEP_PLAYING_DISCONNECT_KEY) === '1'; } catch (e) { return false; }
+  };
+  const outputSnapshot = (devices) => (devices || [])
+    .filter((d) => d && d.kind === 'audiooutput')
+    .map((d) => ({ deviceId: d.deviceId || '', groupId: d.groupId || '', label: d.label || '', kind: 'audiooutput' }));
+  async function rememberOutputs() {
+    knownOutputDevices = outputSnapshot(await listOutputDevices());
+    return knownOutputDevices;
+  }
   async function applyOutputDevice() {
     if (!canPickOutput) return;
     const id = outputDeviceId === 'default' ? '' : outputDeviceId;
@@ -5498,8 +5511,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const menu = document.getElementById('audio-output-menu');
     const label = document.getElementById('audio-output-label');
     if (!canPickOutput || !menu) return;
-    const devices = (await listOutputDevices()).filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
-    knownOutputIds = new Set(devices.map((d) => d.deviceId));
+    const all = await listOutputDevices();
+    knownOutputDevices = outputSnapshot(all);
+    const devices = all.filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
     menu.textContent = '';
     const add = (value, text) => {
       const b = document.createElement('button');
@@ -5521,7 +5535,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     add('', T('System default'));
     devices.forEach((d, i) => add(d.deviceId, (d.label || '').replace(/^Default\s*[-–—:]\s*/i, '').trim() || Tf('Output {0}', i + 1)));
     // the saved device is not connected now: shown as itself, played on the system default until it is back
-    if (outputDeviceId && !knownOutputIds.has(outputDeviceId)) add(outputDeviceId, T('Saved device (not connected)'));
+    if (outputDeviceId && !devices.some((d) => d.deviceId === outputDeviceId)) add(outputDeviceId, T('Saved device (not connected)'));
+  }
+  // Settings > Tracks > Keep playing when headphones disconnect (off: pause)
+  const btnKeepPlayingDisconnect = document.getElementById('btn-keep-playing-disconnect');
+  const disconnectRow = document.getElementById('setting-disconnect-output-row');
+  if (disconnectRow && (canWatchOutputs || isPhoneApp)) disconnectRow.hidden = false;
+  if (btnKeepPlayingDisconnect) {
+    btnKeepPlayingDisconnect.classList.toggle('active', keepPlayingOnDisconnect());
+    btnKeepPlayingDisconnect.addEventListener('click', () => {
+      const on = !btnKeepPlayingDisconnect.classList.contains('active');
+      btnKeepPlayingDisconnect.classList.toggle('active', on);
+      try { localStorage.setItem(KEEP_PLAYING_DISCONNECT_KEY, on ? '1' : '0'); } catch (e) {}
+    });
   }
   if (canPickOutput) {
     const row = document.getElementById('setting-audio-output-row');
@@ -5537,20 +5563,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     // the Web Audio graph is made on the first play: it gets the device then
     el.nativeAudio.addEventListener('playing', () => { if (outputDeviceId) applyOutputDevice(); });
   }
+  if (canWatchOutputs && !canPickOutput) rememberOutputs();
 
   if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === 'function') {
     navigator.mediaDevices.addEventListener('devicechange', async () => {
       updateTvkOutput();
-      if (!canPickOutput) return;
-      const before = knownOutputIds;
-      const now = new Set((await listOutputDevices()).map((d) => d.deviceId).filter((id) => id && id !== 'default' && id !== 'communications'));
-      const lostChosen = !!outputDeviceId && !!before && before.has(outputDeviceId) && !now.has(outputDeviceId);
-      if (state.isPlaying && lostChosen && el.nativeAudio && !el.nativeAudio.paused) {
-        el.nativeAudio.pause();
+      if (!canWatchOutputs) return;
+      const before = knownOutputDevices;
+      const after = outputSnapshot(await listOutputDevices());
+      knownOutputDevices = after;
+      const route = window.CanaryAudioRoute;
+      const next = route && route.shouldPauseOnOutputChange
+        ? route.shouldPauseOnOutputChange({
+            playing: !!state.isPlaying,
+            keepPlaying: keepPlayingOnDisconnect(),
+            before,
+            after,
+            chosenId: outputDeviceId,
+            sinkId: (el.nativeAudio && el.nativeAudio.sinkId) || ''
+          })
+        : { pause: false };
+      if (next.pause) {
+        if (typeof window.pauseSmooth === 'function') window.pauseSmooth();
+        else { try { el.nativeAudio.pause(); } catch (e) {} }
         showToast(Tm('Paused: the output device was disconnected'), 'info');
       }
       renderOutputDevices();
-      if (outputDeviceId && now.has(outputDeviceId)) applyOutputDevice();
+      if (canPickOutput && outputDeviceId && after.some((d) => d.deviceId === outputDeviceId)) applyOutputDevice();
     });
   }
 

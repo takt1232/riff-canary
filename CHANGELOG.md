@@ -11,6 +11,14 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
 - Canary starts fresh: settings, profiles, history and other local data from Muriel are not
   imported. On phones this is a separate app and needs a fresh install.
 
+## 1.3.16 — 2026-11-03
+
+### Added
+
+- Settings → Playback has a new "Keep playing when headphones disconnect" switch. Canary now
+  pauses when the active Bluetooth or wired headphones or speakers disconnect (the default);
+  with the switch on, the song keeps playing on the speakers instead.
+
 ## 1.3.15 — 2026-11-03
 
 ### Added

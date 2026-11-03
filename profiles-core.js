@@ -19,6 +19,7 @@
     'canary_tray_on_close', 'canary_global_media_keys', 'canary_win_global_media_keys', 'canary_hide_titlebar',
     // what this device can handle
     'canary_perf_mode', 'canary_battery_saver', 'canary_fps_cap', 'canary_cache_limit_mb', 'canary_stream_timeout', 'canary_audio_output_device',
+    'canary_keep_playing_on_disconnect',
     // asked, shown or done once per device
     'canary_update_found', 'canary_update_last', 'canary_update_snooze', 'canary_welcome_done', 'canary_bg_asked',
     'canary_scale_rebased_v2', 'canary_debug_log',

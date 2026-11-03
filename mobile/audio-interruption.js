@@ -10,6 +10,9 @@ module.exports = function audioInterruption() {
   if (Capacitor.getPlatform() !== 'ios') return;
   const plugin = registerPlugin('CanaryAudioSession');
   const core = () => window.CanaryCore;
+  // Settings → Playback: off (the default) pauses when the headphones / Bluetooth device go away
+  const KEEP_PLAYING_DISCONNECT_KEY = 'canary_keep_playing_on_disconnect';
+  const keepPlayingOnDisconnect = () => { try { return localStorage.getItem(KEEP_PLAYING_DISCONNECT_KEY) === '1'; } catch (e) { return false; } };
   let lastPlayingAt = 0;
   let wasPlaying = false;
 
@@ -31,6 +34,22 @@ module.exports = function audioInterruption() {
       // the 'pause' iOS caused left state.isPlaying false, so this is a play, not a pause
       if (c.state.isPlaying) a.play().catch(() => {});
       else c.togglePlay();
+    });
+    // iOS says the old output (headphones or Bluetooth) is gone. It usually pauses the song itself
+    // just before this; the setting decides whether that stands or the song goes on on the speakers.
+    plugin.addListener('routeChange', ({ reason } = {}) => {
+      if (reason !== 'oldDeviceUnavailable') return;
+      const wasPlayingBefore = c.state.isPlaying || wasPlayingAtInterruption({
+        paused: a.paused, ended: a.ended, pausedByUser: !!c.state.pausedByUser, lastPlayingAt, now: Date.now(),
+      });
+      if (!wasPlayingBefore) return;
+      if (keepPlayingOnDisconnect()) {
+        if (a.paused) a.play().catch(() => {});
+        return;
+      }
+      if (typeof window.pauseSmooth === 'function') window.pauseSmooth();
+      else if (c.state.isPlaying) c.togglePlay();
+      if (c.toast) c.toast((window.CanaryI18n || { Tm: (s) => s }).Tm('Paused: the output device was disconnected'), 'info');
     });
   }
   if (window.CanaryCore) hook(); else window.addEventListener('canary:ready', hook, { once: true });

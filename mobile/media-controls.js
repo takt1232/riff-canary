@@ -14,6 +14,16 @@ module.exports = function mediaControls() {
   // whose Origin Island won't take Canary's playback notification itself.
   const ISLAND = 'canary_android_island';
   const islandMode = () => { const v = localStorage.getItem(ISLAND); return v === 'on' || v === 'off' ? v : 'auto'; };
+  // Settings → Playback: off (the default) pauses when the headphones / Bluetooth device go away
+  const KEEP_PLAYING_DISCONNECT_KEY = 'canary_keep_playing_on_disconnect';
+  const keepPlayingOnDisconnect = () => { try { return localStorage.getItem(KEEP_PLAYING_DISCONNECT_KEY) === '1'; } catch (e) { return false; } };
+  const pauseForDisconnect = () => {
+    const c = core();
+    if (!c || !c.state || !c.state.isPlaying || keepPlayingOnDisconnect()) return;
+    if (typeof window.pauseSmooth === 'function') window.pauseSmooth();
+    else c.togglePlay();
+    if (c.toast) c.toast((window.CanaryI18n || { Tm: (s) => s }).Tm('Paused: the output device was disconnected'), 'info');
+  };
 
   function send() {
     pending = 0;
@@ -100,6 +110,8 @@ module.exports = function mediaControls() {
       // the native side already counts play / next / previous as playing; if nothing started, it hears so
       update();
     });
+    // Android sends this when a wired headset is pulled out or a Bluetooth device disconnects
+    plugin.addListener('becomingNoisy', pauseForDisconnect);
   }
   if (window.CanaryCore) hook(); else window.addEventListener('canary:ready', hook, { once: true });
 };
