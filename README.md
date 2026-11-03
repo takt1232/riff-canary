@@ -37,6 +37,55 @@ npm run dist
 
 Installers land in `dist/`. Builds are unsigned: on macOS, right-click Muriel in Applications and choose Open; if macOS says the app is damaged, run `xattr -cr /Applications/Muriel.app`.
 
+## Tools
+
+The scripts in `tools/` are optional PowerShell helpers for Windows. The normal `npm` and Gradle commands still work.
+
+### `tools/build.ps1`
+
+Builds the desktop installer and/or the Android APK.
+
+```powershell
+.\tools\build.ps1                    # both desktop and Android
+.\tools\build.ps1 -Target desktop    # desktop installer only
+.\tools\build.ps1 -Target android    # Android debug APK only
+```
+
+Build the APK and install it on a connected phone:
+
+```powershell
+.\tools\build.ps1 -Target android -Install
+```
+
+Options:
+
+- `-Device <serial>` — pick a device when more than one is connected (`adb devices`).
+- `-VersionCode <n>` — override the Android version code. By default a timestamp is used, so the APK installs over the previous build.
+
+Outputs:
+
+- Desktop: `dist\muriel-<version>-win-x64.exe` (the same as `npm run dist`)
+- Android: `android\app\build\outputs\apk\debug\app-debug.apk`
+
+Android builds need JDK 21, but you don't have to install it yourself: `android/settings.gradle` and `android/gradle/gradle-daemon-jvm.properties` let Gradle download and use the right JDK automatically on the first build (cached in `%USERPROFILE%\.gradle\jdks`). iOS builds are not part of this script.
+
+### `tools/bump-version.ps1`
+
+Bumps the version in `package.json`, `package-lock.json` and `VERSION`.
+
+```powershell
+.\tools\bump-version.ps1 -Part patch   # 1.3.11 -> 1.3.12
+.\tools\bump-version.ps1 -Part minor   # 1.3.11 -> 1.4.0
+.\tools\bump-version.ps1 -Part major   # 1.3.11 -> 2.0.0
+```
+
+`-Part fix` is an alias for `patch`.
+
+- `-Changelog` also prepends a dated entry to `CHANGELOG.md`.
+- `-DryRun` shows the next version without changing any files.
+
+It only edits files: it does not commit, tag or push. The same bump is available through `npm run release` (patch), `npm run release:minor` and `npm run release:major`.
+
 ## Data
 
 - Windows: `%LOCALAPPDATA%\Muriel`
