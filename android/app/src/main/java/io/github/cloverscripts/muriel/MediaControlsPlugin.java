@@ -82,10 +82,10 @@ public class MediaControlsPlugin extends Plugin {
     // vivo, OPPO and Xiaomi islands don't run the Live Update's clock; they show its short text, so that's the title
     static final boolean ISLAND_SHOWS_TEXT = "vivo".equals(VENDOR) || "oplus".equals(VENDOR) || "xiaomi".equals(VENDOR);
     static final int ART_SIZE = 320;
-    // paused: CPU and Wi-Fi are let go after this
-    static final long LOCK_RELEASE_MS = 15_000;
-    // re-taken on every update while playing; only a page that stopped talking lets it run out
-    static final long WAKE_LOCK_MS = 30 * 60 * 1000;
+    // paused, or the next song started: CPU and Wi-Fi are let go after this
+    static final long LOCK_RELEASE_MS = 2_000;
+    // re-taken on every update while the next song loads; a page that stopped talking lets it run out
+    static final long WAKE_LOCK_MS = 3 * 60 * 1000;
 
     // read by PlaybackService
     static volatile MediaControlsPlugin instance;
@@ -175,7 +175,7 @@ public class MediaControlsPlugin extends Plugin {
     void start(String action) {
         if (!playing) {
             playing = true;
-            holdLocks();
+            // no lock here: the page's update() takes it only if the next song has to load
             refreshNotification();
         }
         send(action, -1);
@@ -205,7 +205,8 @@ public class MediaControlsPlugin extends Plugin {
             loadArtwork(art);
         }
         playing = nowPlaying || loading;
-        if (playing) holdLocks();
+        // Playing audio already keeps the CPU awake; the locks are for the gap while the next song loads.
+        if (loading) holdLocks();
         else {
             handler.removeCallbacks(releaseLater);
             handler.postDelayed(releaseLater, LOCK_RELEASE_MS);
@@ -381,6 +382,8 @@ public class MediaControlsPlugin extends Plugin {
             }
             if (!wifiLock.isHeld()) wifiLock.acquire();
         } catch (Exception ignored) {}
+        // WifiLock has no timed acquire: release it (and the wake lock) even if the page stops talking
+        handler.postDelayed(releaseLater, WAKE_LOCK_MS);
     }
 
     private synchronized void releaseLocks() {
