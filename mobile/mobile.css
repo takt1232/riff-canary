@@ -228,6 +228,15 @@ html.is-mobile .chips-row, html.is-mobile .genre-chips { overflow-x: auto !impor
 
 /* hover-only controls are unreachable by touch; keep row actions visible */
 html.is-mobile .track-row .track-row-actions { opacity: 1 !important; }
+html.is-mobile .playlist-item .playlist-item-play-btn {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+}
+html.is-mobile .playlist-item .playlist-item-play-btn svg { width: 18px !important; height: 18px !important; }
 
 /* ---------- touch-sized details ---------- */
 html.is-mobile .rail-action-group { display: flex !important; }

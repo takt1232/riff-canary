@@ -4846,6 +4846,48 @@ button:active svg, button:active img, button:active i, .btn-icon-pill:active svg
   height: 14px;
 }
 
+/* Play a playlist straight from the list (the drawer's rows) without opening it */
+.playlist-item-play-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  color: #1c1b1f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, background-color var(--transition-m3), transform 0.15s ease;
+}
+
+.playlist-item:hover .playlist-item-play-btn,
+.playlist-item:focus-within .playlist-item-play-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.playlist-item-play-btn:hover {
+  background: #f0f0f0;
+  color: #000;
+}
+
+.playlist-item-play-btn:active {
+  transform: scale(0.92);
+}
+
+.playlist-item-play-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .playbar, .scrubber-track-container, .squiggly-canvas, .scrubber-bar-wrapper {
   overflow: visible !important;
 }

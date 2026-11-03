@@ -9534,6 +9534,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       item.appendChild(thumbEl);
       item.appendChild(infoEl);
 
+      // Play the playlist right from the list, without opening its page first
+      if (trackCount > 0) {
+        const playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.className = 'playlist-item-play-btn';
+        playBtn.title = 'Play';
+        playBtn.setAttribute('aria-label', 'Play');
+        playBtn.setAttribute('data-i18n-attr', 'title aria-label');
+        playBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="8 5 19 12 8 19"></polygon></svg>';
+        playBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          playPlaylist(pl, false);
+        });
+        item.appendChild(playBtn);
+      }
+
       item.addEventListener('click', () => {
         openPlaylistDetail(pl.id);
       });
@@ -9950,13 +9966,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
   // Play goes through the playlist in the order shown; Shuffle turns shuffle on and starts on a random song
-  function playOpenPlaylist(shuffle) {
-    const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
+  function playPlaylist(pl, shuffle) {
     if (!pl || !pl.tracks || !pl.tracks.length) return;
     const list = sortTracksFor('playlist', pl.tracks);
     setShuffle(shuffle);
     const i = shuffle ? Math.floor(Math.random() * list.length) : 0;
     playTrack(list[i], list, i, 'playlist');
+  }
+  function playOpenPlaylist(shuffle) {
+    playPlaylist(state.playlists.find(p => p.id === state.currentPlaylistId), shuffle);
   }
   // Share: the playlist goes inside a link (share-link.js) that opens in the web player or in Muriel
   async function sharePlaylist(pl) {
