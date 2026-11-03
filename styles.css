@@ -1531,12 +1531,17 @@ body.perf .my-wave-ambient-light {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   flex-shrink: 0;
-  color: var(--md-sys-color-primary);
+  padding: 2.5px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   vertical-align: middle;
   user-select: none;
+  box-sizing: border-box;
 }
 .track-downloaded-badge svg {
   display: block;
@@ -1547,9 +1552,9 @@ body.perf .my-wave-ambient-light {
   display: none !important;
 }
 .track-row-downloaded {
-  width: 14px;
-  height: 14px;
-  opacity: 0.9;
+  width: 16px;
+  height: 16px;
+  opacity: 0.95;
 }
 .track-row-title {
   display: block;

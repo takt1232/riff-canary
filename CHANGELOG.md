@@ -11,13 +11,18 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
 - Canary starts fresh: settings, profiles, history and other local data from Muriel are not
   imported. On phones this is a separate app and needs a fresh install.
 
-## 1.3.14 — 2026-11-03
+## 1.3.15 — 2026-11-03
 
 ### Added
 
 - Songs saved in the Downloads folder now show a small Downloaded badge in track
   lists, the playbar, the now-playing panel and the download dialog. The badge
   ignores Canary's internal offline cache, which is separate from downloaded files.
+
+### Changed
+
+- The download dialog has an opaque surface, live progress bars with speed and
+  batch percentage, and a background-download mode with a close confirmation.
 
 ## 1.3.13 — 2026-11-03
 

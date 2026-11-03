@@ -8229,7 +8229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       <div class="track-row-title-line">
       <span class="track-row-title">${escapeHtml(track.title || 'untitled')}</span>
       <span class="track-downloaded-badge track-row-downloaded hidden" title="Downloaded" aria-label="Downloaded">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="8 12.5 11 15.5 16 9"></polyline></svg>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 8.5 6.5 12 13 4.5"></polyline></svg>
       </span>
       </div>
       ${explicitTag ? `<span class="track-row-artist-wrap">${explicitTag}${artistSpan}</span>` : artistSpan}
