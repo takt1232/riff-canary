@@ -2,6 +2,14 @@
 
 Notable changes to Muriel. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.3.12 — 2026-11-03
+
+### Added
+
+- Playlists in the Playlists drawer now have a play button, so a playlist can
+  start right from the list without opening it first. The button is always
+  visible on phones.
+
 ## 1.3.11 — 2026-11-03
 
 ### Fixed
