@@ -100,8 +100,6 @@ repository keeps the name `riff-muriel` for now.
 
 Canary is a player: it doesn't host, upload or sell music, has no ads, accounts or tracking, and nobody earns
 money from it. You're responsible for using it in line with copyright and the terms of the services you use.
-Rights holders can reach us through a [rights holder request](https://github.com/takt1232/riff-muriel/issues/new?template=rights-holder-request.yml).
-Details, also in German: [LEGAL.md](LEGAL.md).
 
 ## License
 
