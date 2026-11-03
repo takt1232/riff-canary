@@ -304,9 +304,45 @@
             <button type="button" class="chip-btn" data-filter="artists" role="tab" aria-selected="false">Artists</button>
             <button type="button" class="chip-btn" data-filter="albums" role="tab" aria-selected="false">Albums</button>
           </div>
-          <div id="search-artist-card-container"></div>
-          <div id="search-albums-container"></div>
-          <div class="tracks-list" id="search-tracks-list"></div>
+          <div class="search-arrange-bar" id="search-arrange-bar" hidden>
+            <span data-i18n>Press and hold a section title, then drag to reorder</span>
+            <button type="button" class="chip-btn" id="search-arrange-done" data-i18n>Done</button>
+          </div>
+          <div class="search-sections" id="search-sections">
+            <section class="search-section" data-section="songs">
+              <div class="search-section-head">
+                <svg class="search-section-grip" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                <h3 data-i18n>Songs</h3>
+                <span class="search-section-tools">
+                  <button type="button" class="search-section-move" data-move="-1" aria-label="Move up" title="Move up" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
+                  <button type="button" class="search-section-move" data-move="1" aria-label="Move down" title="Move down" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+                </span>
+              </div>
+              <div class="tracks-list search-section-body" id="search-tracks-list"></div>
+            </section>
+            <section class="search-section" data-section="artists">
+              <div class="search-section-head">
+                <svg class="search-section-grip" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                <h3 data-i18n>Artists</h3>
+                <span class="search-section-tools">
+                  <button type="button" class="search-section-move" data-move="-1" aria-label="Move up" title="Move up" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
+                  <button type="button" class="search-section-move" data-move="1" aria-label="Move down" title="Move down" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+                </span>
+              </div>
+              <div class="search-section-body" id="search-artist-card-container"></div>
+            </section>
+            <section class="search-section" data-section="albums">
+              <div class="search-section-head">
+                <svg class="search-section-grip" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                <h3 data-i18n>Albums</h3>
+                <span class="search-section-tools">
+                  <button type="button" class="search-section-move" data-move="-1" aria-label="Move up" title="Move up" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
+                  <button type="button" class="search-section-move" data-move="1" aria-label="Move down" title="Move down" data-i18n-attr="aria-label title"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+                </span>
+              </div>
+              <div class="search-section-body" id="search-albums-container"></div>
+            </section>
+          </div>
         </div>
       </section>
 

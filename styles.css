@@ -8929,12 +8929,110 @@ body.perf .dl-mode-tab, body.perf .cc-float-time { transition: none !important; 
 /* Search: All / Songs / Artists / Albums */
 .search-filter-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; }
 .search-filter-chips .chip-btn { padding: 6px 14px; font-size: calc(13px * var(--font-scale, 1)); transition: background .15s, color .15s; }
-#search-results-container[data-filter="songs"] #search-artist-card-container,
-#search-results-container[data-filter="songs"] #search-albums-container,
-#search-results-container[data-filter="artists"] #search-albums-container,
-#search-results-container[data-filter="artists"] #search-tracks-list,
-#search-results-container[data-filter="albums"] #search-artist-card-container,
-#search-results-container[data-filter="albums"] #search-tracks-list { display: none !important; }
+#search-results-container[data-filter="songs"] .search-section[data-section="artists"],
+#search-results-container[data-filter="songs"] .search-section[data-section="albums"],
+#search-results-container[data-filter="artists"] .search-section[data-section="songs"],
+#search-results-container[data-filter="artists"] .search-section[data-section="albums"],
+#search-results-container[data-filter="albums"] .search-section[data-section="songs"],
+#search-results-container[data-filter="albums"] .search-section[data-section="artists"] { display: none !important; }
+
+/* Search sections: Songs first by default; hold a section title to arrange them */
+.search-sections { position: relative; }
+.search-section { margin-bottom: 16px; }
+.search-section:has(> .search-section-body:empty) { display: none; }
+.search-section .search-artist-card,
+.search-section .search-albums-section { margin-bottom: 0; }
+.search-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 8px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.search-section-head h3 {
+  margin: 0;
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 700;
+  text-transform: none;
+}
+.search-section-grip {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  color: var(--md-sys-color-outline);
+  opacity: .4;
+  cursor: grab;
+  transition: opacity .15s;
+}
+.search-section-head:hover .search-section-grip { opacity: .8; }
+.search-section-tools { display: none; gap: 4px; margin-left: auto; }
+.search-results-container.search-arranging .search-section-tools { display: inline-flex; }
+.search-section-move {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+}
+.search-section-move:hover { background: var(--md-sys-color-surface-container-highest); }
+.search-section-move:disabled { opacity: .3; cursor: default; }
+.search-section-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.search-arrange-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 8px 10px 8px 16px;
+  border-radius: var(--md-shape-corner-full, 999px);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent);
+  color: var(--md-sys-color-primary);
+  font-size: calc(13px * var(--font-scale, 1));
+}
+.search-arrange-bar[hidden] { display: none; }
+.search-arrange-bar span { min-width: 0; }
+.search-arrange-bar .chip-btn { flex: none; padding: 5px 14px; font-size: inherit; }
+
+.search-results-container.search-arranging .search-section {
+  border-radius: 18px;
+  outline: 1px dashed color-mix(in srgb, var(--md-sys-color-primary) 45%, transparent);
+  outline-offset: 5px;
+  background: color-mix(in srgb, var(--md-sys-color-primary) 5%, transparent);
+}
+.search-results-container.search-arranging .search-section-head { cursor: grab; }
+.search-results-container.search-arranging .search-section-grip { opacity: 1; }
+.search-section.is-search-dragging {
+  position: relative;
+  z-index: 30;
+  border-radius: 18px;
+  background: var(--md-sys-color-surface-container-low);
+  outline-color: var(--md-sys-color-primary);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .38);
+  pointer-events: none;
+  transition: none !important;
+}
+.search-section.is-search-dragging .search-section-head { cursor: grabbing; }
+.search-drop-line {
+  position: fixed;
+  z-index: 80;
+  display: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-sys-color-primary) 22%, transparent);
+  pointer-events: none;
+}
+body.search-arranging { user-select: none; -webkit-user-select: none; }
 
 /* Blocked artists and songs (Settings > Tracks, artist page) */
 .blocked-items-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

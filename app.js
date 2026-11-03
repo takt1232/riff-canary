@@ -7532,11 +7532,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function fetchAlbumsForSearch(query, token) {
     let container = document.getElementById('search-albums-container');
     if (!container) {
-      const artistContainer = document.getElementById('search-artist-card-container');
-      if (artistContainer && artistContainer.parentNode) {
+      const body = document.querySelector('#search-sections .search-section[data-section="albums"] .search-section-body');
+      if (body) {
         container = document.createElement('div');
         container.id = 'search-albums-container';
-        artistContainer.parentNode.insertBefore(container, artistContainer.nextSibling);
+        body.appendChild(container);
       }
     }
     if (!container) return;
@@ -7553,9 +7553,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const albums = data.albums;
       container.innerHTML = `
         <div class="search-albums-section">
-          <div class="section-sub-header">
-            <h3 data-i18n>Albums</h3>
-          </div>
           <div class="search-albums-row">
             ${albums.map(album => {
               const sub = album.year ? `${escapeHtml(album.artist)} · ${escapeHtml(album.year)}` : escapeHtml(album.artist || '');
@@ -7600,6 +7597,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function performSearch(query) {
     if (!query || !query.trim()) return;
+    exitSearchArrange();
     // a shared playlist link pasted into the search bar adds the playlist
     if (window.MurielShare && window.MurielShare.payloadFrom(query)) {
       if (el.searchInput) { el.searchInput.value = ''; el.searchInput.blur(); }
@@ -7669,6 +7667,336 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // ---- search sections: the Songs / Artists / Albums order, and arranging it by holding a section title ----
+  const SEARCH_ORDER_KEY = 'muriel_search_order';
+  const SEARCH_SECTION_IDS = ['songs', 'artists', 'albums'];
+
+  function readSearchOrder() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SEARCH_ORDER_KEY) || 'null'); } catch (e) {}
+    const order = [];
+    (Array.isArray(saved) ? saved : []).forEach((id) => {
+      if (SEARCH_SECTION_IDS.includes(id) && !order.includes(id)) order.push(id);
+    });
+    // ids this version does not know are ignored; a new section falls in at the end instead of disappearing
+    SEARCH_SECTION_IDS.forEach((id) => { if (!order.includes(id)) order.push(id); });
+    return order;
+  }
+
+  function applySearchOrder(order = readSearchOrder()) {
+    const list = document.getElementById('search-sections');
+    if (!list) return;
+    const sections = Array.from(list.querySelectorAll(':scope > .search-section'));
+    order.forEach((id) => {
+      const section = sections.find((s) => s.dataset.section === id);
+      if (section) list.appendChild(section);
+    });
+  }
+
+  function saveSearchOrder() {
+    const list = document.getElementById('search-sections');
+    if (!list) return;
+    const order = Array.from(list.querySelectorAll(':scope > .search-section'))
+      .map((s) => s.dataset.section)
+      .filter((id) => SEARCH_SECTION_IDS.includes(id));
+    try { localStorage.setItem(SEARCH_ORDER_KEY, JSON.stringify(order)); } catch (e) {}
+  }
+
+  function setSearchFilter(filter) {
+    const box = el.searchResultsContainer;
+    if (!box) return;
+    box.dataset.filter = filter;
+    const chips = document.getElementById('search-filter-chips');
+    if (!chips) return;
+    chips.querySelectorAll('.chip-btn[data-filter]').forEach((c) => {
+      const on = c.dataset.filter === filter;
+      c.classList.toggle('active', on);
+      c.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  // replaced once the search results are set up; performSearch calls it before every new search
+  let exitSearchArrange = () => {};
+
+  function initSearchSectionArrangement() {
+    const box = el.searchResultsContainer;
+    const list = document.getElementById('search-sections');
+    const bar = document.getElementById('search-arrange-bar');
+    if (!box || !list) return;
+
+    let arranging = false;
+    let previousFilter = 'all';
+    let hold = null;
+    let drag = null;
+    let autoScrollTimer = null;
+    let suppressUntil = 0;
+    let dropLine = null;
+    let lastPointerY = 0;
+
+    const sectionsNow = () => Array.from(list.querySelectorAll(':scope > .search-section'));
+    const isVisible = (section) => !!section && section.offsetParent !== null;
+
+    function updateMoveButtons() {
+      const all = sectionsNow();
+      const visible = all.filter(isVisible);
+      all.forEach((section) => {
+        const idx = visible.indexOf(section);
+        section.querySelectorAll('.search-section-move').forEach((btn) => {
+          const delta = Number(btn.dataset.move) || 0;
+          btn.disabled = !arranging || idx < 0 || !visible[idx + delta];
+        });
+      });
+    }
+
+    // Long lists are virtualised (renderTracks): after the Songs section moves, its rendered slice has to be
+    // worked out again from the new position.
+    function afterOrderChanged() {
+      saveSearchOrder();
+      updateMoveButtons();
+      if (Array.isArray(state.searchResults) && state.searchResults.length && el.searchTracksList &&
+        el.searchTracksList.querySelector('.track-row')) {
+        requestAnimationFrame(() => renderTracks(el.searchTracksList, state.searchResults, 'search'));
+      }
+    }
+
+    function moveSection(section, delta) {
+      if (!delta) return;
+      const visible = sectionsNow().filter(isVisible);
+      const target = visible[visible.indexOf(section) + delta];
+      if (!target) return;
+      if (delta < 0) target.before(section);
+      else target.after(section);
+      afterOrderChanged();
+    }
+
+    function updateDropLine(others, targetIndex) {
+      if (!dropLine) return;
+      let top = null;
+      if (targetIndex < others.length) top = others[targetIndex].getBoundingClientRect().top - 3;
+      else if (others.length) top = others[others.length - 1].getBoundingClientRect().bottom + 1;
+      if (top === null) {
+        dropLine.style.display = 'none';
+        return;
+      }
+      const rect = list.getBoundingClientRect();
+      dropLine.style.display = 'block';
+      dropLine.style.left = `${rect.left}px`;
+      dropLine.style.width = `${rect.width}px`;
+      dropLine.style.top = `${top}px`;
+    }
+
+    function updateDropTarget(pointerY) {
+      if (!drag) return;
+      let targetIndex = drag.others.length;
+      for (let i = 0; i < drag.others.length; i++) {
+        const rect = drag.others[i].getBoundingClientRect();
+        if (pointerY < rect.top + rect.height / 2) { targetIndex = i; break; }
+      }
+      drag.targetIndex = targetIndex;
+      updateDropLine(drag.others, targetIndex);
+    }
+
+    function updateAutoScroll(pointerY) {
+      const scroller = document.querySelector('.main-content');
+      if (!scroller) return;
+      const rect = scroller.getBoundingClientRect();
+      const direction = pointerY < rect.top + 70 ? -1 : pointerY > rect.bottom - 70 ? 1 : 0;
+      if (!direction) {
+        clearInterval(autoScrollTimer);
+        autoScrollTimer = null;
+        return;
+      }
+      if (autoScrollTimer) return;
+      autoScrollTimer = setInterval(() => {
+        if (!drag) {
+          clearInterval(autoScrollTimer);
+          autoScrollTimer = null;
+          return;
+        }
+        scroller.scrollBy(0, direction * 12);
+        updateDropTarget(lastPointerY);
+      }, 16);
+    }
+
+    function blockTouchMove(e) {
+      if (drag) e.preventDefault();
+    }
+
+    function onDragMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      lastPointerY = e.clientY;
+      const dy = e.clientY - drag.startY;
+      if (Math.abs(dy) > 3) drag.moved = true;
+      drag.section.style.transform = `translate3d(0, ${dy}px, 0)`;
+      if (drag.moved && e.cancelable) e.preventDefault();
+      updateDropTarget(e.clientY);
+      updateAutoScroll(e.clientY);
+    }
+
+    function endDrag(e, forceCancel = false) {
+      if (e && drag && e.pointerId !== drag.pointerId) return;
+      clearInterval(autoScrollTimer);
+      autoScrollTimer = null;
+      window.removeEventListener('pointermove', onDragMove, true);
+      window.removeEventListener('pointerup', endDrag, true);
+      window.removeEventListener('pointercancel', endDrag, true);
+      list.removeEventListener('touchmove', blockTouchMove);
+      if (!drag) return;
+      const finished = drag;
+      drag = null;
+      const cancelled = forceCancel || (!!e && e.type === 'pointercancel');
+      finished.section.classList.remove('is-search-dragging');
+      finished.section.style.transform = '';
+      finished.section.style.transition = '';
+      finished.section.style.willChange = '';
+      if (dropLine) dropLine.style.display = 'none';
+      if (finished.moved && !cancelled) {
+        const target = finished.others[finished.targetIndex];
+        if (target) list.insertBefore(finished.section, target);
+        else list.appendChild(finished.section);
+        afterOrderChanged();
+      }
+      updateMoveButtons();
+      if (finished.moved) suppressUntil = performance.now() + 400;
+    }
+
+    function startDrag(section, pointerId, clientX, clientY) {
+      const others = sectionsNow().filter((s) => s !== section && isVisible(s));
+      drag = {
+        section,
+        pointerId,
+        startY: clientY,
+        moved: false,
+        others,
+        targetIndex: others.length
+      };
+      section.classList.add('is-search-dragging');
+      section.style.willChange = 'transform';
+      lastPointerY = clientY;
+      if (!dropLine) {
+        dropLine = document.createElement('div');
+        dropLine.className = 'search-drop-line';
+        document.body.appendChild(dropLine);
+      }
+      updateDropTarget(clientY);
+      window.addEventListener('pointermove', onDragMove, true);
+      window.addEventListener('pointerup', endDrag, true);
+      window.addEventListener('pointercancel', endDrag, true);
+      list.addEventListener('touchmove', blockTouchMove, { passive: false });
+    }
+
+    function clearHold() {
+      if (!hold) return;
+      clearTimeout(hold.timer);
+      hold = null;
+      window.removeEventListener('pointermove', onHoldMove, true);
+      window.removeEventListener('pointerup', onHoldEnd, true);
+      window.removeEventListener('pointercancel', onHoldEnd, true);
+    }
+
+    function onHoldMove(e) {
+      if (!hold || e.pointerId !== hold.id) return;
+      // moving before the hold completes is a scroll, not an arrange
+      if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) clearHold();
+    }
+
+    function onHoldEnd(e) {
+      if (hold && e.pointerId !== hold.id) return;
+      clearHold();
+    }
+
+    function onHoldStart(e) {
+      if (e.button !== 0 || drag) return;
+      if (box.classList.contains('hidden')) return;
+      const head = e.target.closest('.search-section-head');
+      if (!head || !list.contains(head)) return;
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      const section = head.closest('.search-section');
+      if (!section || !isVisible(section)) return;
+
+      // already arranging: a new grab needs no second hold
+      if (arranging) {
+        e.preventDefault();
+        startDrag(section, e.pointerId, e.clientX, e.clientY);
+        return;
+      }
+
+      clearHold();
+      hold = { section, id: e.pointerId, x: e.clientX, y: e.clientY, timer: 0 };
+      hold.timer = setTimeout(() => {
+        if (!hold) return;
+        const held = hold;
+        hold = null;
+        window.removeEventListener('pointermove', onHoldMove, true);
+        window.removeEventListener('pointerup', onHoldEnd, true);
+        window.removeEventListener('pointercancel', onHoldEnd, true);
+        try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
+        beginArrange();
+        startDrag(held.section, held.id, held.x, held.y);
+      }, e.pointerType === 'touch' ? TOUCH_HOLD_MS : 420);
+      window.addEventListener('pointermove', onHoldMove, true);
+      window.addEventListener('pointerup', onHoldEnd, true);
+      window.addEventListener('pointercancel', onHoldEnd, true);
+    }
+
+    function beginArrange() {
+      if (arranging) return;
+      arranging = true;
+      previousFilter = box.dataset.filter || 'all';
+      setSearchFilter('all');
+      box.classList.add('search-arranging');
+      document.body.classList.add('search-arranging');
+      if (bar) bar.hidden = false;
+      updateMoveButtons();
+    }
+
+    function endArrange(restoreFilter = true) {
+      if (!arranging) return;
+      arranging = false;
+      endDrag(null, true);
+      clearHold();
+      box.classList.remove('search-arranging');
+      document.body.classList.remove('search-arranging');
+      if (bar) bar.hidden = true;
+      if (restoreFilter) setSearchFilter(previousFilter);
+      updateMoveButtons();
+    }
+    exitSearchArrange = endArrange;
+
+    list.addEventListener('pointerdown', onHoldStart);
+    list.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.search-section-head')) e.preventDefault();
+    });
+    list.addEventListener('click', (e) => {
+      const btn = e.target.closest('.search-section-move');
+      if (!btn) return;
+      const section = btn.closest('.search-section');
+      if (!section) return;
+      e.preventDefault();
+      e.stopPropagation();
+      moveSection(section, Number(btn.dataset.move) || 0);
+    });
+    if (bar) {
+      const done = document.getElementById('search-arrange-done');
+      if (done) done.addEventListener('click', () => { endArrange(); suppressUntil = performance.now() + 300; });
+    }
+    document.addEventListener('pointerdown', (e) => {
+      if (!arranging || drag) return;
+      if (list.contains(e.target) || (bar && bar.contains(e.target))) return;
+      endArrange();
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (!arranging || e.key !== 'Escape') return;
+      e.preventDefault();
+      endArrange();
+    });
+    // the click the release turns into must not open an album/artist card under the finger
+    window.addEventListener('click', (e) => {
+      if (performance.now() >= suppressUntil) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }, true);
+  }
 
   const multiSel = { active: false, context: '', tracks: new Map() };
 
@@ -10515,6 +10843,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         el.searchClearBtn.classList.add('hidden');
       }
       if (!val.trim()) {
+        exitSearchArrange();
         if (el.discoverEmpty) el.discoverEmpty.classList.remove('hidden');
         if (el.searchResultsContainer) el.searchResultsContainer.classList.add('hidden');
         const artistCardContainer = document.getElementById('search-artist-card-container');
@@ -10530,6 +10859,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (e.key === 'Escape') {
         el.searchInput.value = '';
         if (el.searchClearBtn) el.searchClearBtn.classList.add('hidden');
+        exitSearchArrange();
         if (el.discoverEmpty) el.discoverEmpty.classList.remove('hidden');
         if (el.searchResultsContainer) el.searchResultsContainer.classList.add('hidden');
         const artistCardContainer = document.getElementById('search-artist-card-container');
@@ -10550,6 +10880,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.searchClearBtn.addEventListener('click', () => {
       if (el.searchInput) el.searchInput.value = '';
       el.searchClearBtn.classList.add('hidden');
+      exitSearchArrange();
       if (el.discoverEmpty) el.discoverEmpty.classList.remove('hidden');
       if (el.searchResultsContainer) el.searchResultsContainer.classList.add('hidden');
       const artistCardContainer = document.getElementById('search-artist-card-container');
@@ -19076,6 +19407,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  applySearchOrder();
+  initSearchSectionArrangement();
+
   // Search results: All / Songs / Artists / Albums (from Riff 43.1). Only shows or hides the sections, so the
   // choice stays for the next search.
   (function initSearchFilterChips() {
@@ -19085,12 +19419,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     chips.addEventListener('click', (e) => {
       const chip = e.target.closest('.chip-btn[data-filter]');
       if (!chip) return;
-      box.dataset.filter = chip.dataset.filter;
-      chips.querySelectorAll('.chip-btn').forEach((c) => {
-        const on = c === chip;
-        c.classList.toggle('active', on);
-        c.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
+      exitSearchArrange(false);
+      setSearchFilter(chip.dataset.filter);
     });
   })();
 
