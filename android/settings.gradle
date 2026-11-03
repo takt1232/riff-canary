@@ -1,3 +1,10 @@
+// Capacitor 8's Android plugins ask for a Java 21 toolchain. When this machine only has an older JDK, the
+// Foojay resolver downloads a matching JDK into %USERPROFILE%\.gradle\jdks and Gradle uses it for those
+// modules, so the build works without changing JAVA_HOME or installing Java system-wide.
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 include ':app'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
