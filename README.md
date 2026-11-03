@@ -40,50 +40,50 @@ Installers land in `dist/`. Builds are unsigned: on macOS, right-click Canary in
 
 ## Tools
 
-The scripts in `tools/` are optional PowerShell helpers for Windows. The normal `npm` and Gradle commands still work.
+The scripts in `tools/` are optional helpers that run with Node.js on Windows, Linux and macOS. The normal `npm` and Gradle commands still work.
 
-### `tools/build.ps1`
+### `tools/build.mjs`
 
 Builds the desktop installer and/or the Android APK.
 
-```powershell
-.\tools\build.ps1                    # both desktop and Android
-.\tools\build.ps1 -Target desktop    # desktop installer only
-.\tools\build.ps1 -Target android    # Android debug APK only
+```bash
+node tools/build.mjs                    # both desktop and Android
+node tools/build.mjs --target desktop   # desktop installer only
+node tools/build.mjs --target android   # Android debug APK only
 ```
 
 Build the APK and install it on a connected phone:
 
-```powershell
-.\tools\build.ps1 -Target android -Install
+```bash
+node tools/build.mjs --target android --install
 ```
 
 Options:
 
-- `-Device <serial>` — pick a device when more than one is connected (`adb devices`).
-- `-VersionCode <n>` — override the Android version code. By default a timestamp is used, so the APK installs over the previous build.
+- `--device <serial>` — pick a device when more than one is connected (`adb devices`).
+- `--version-code <n>` — override the Android version code. By default a timestamp is used, so the APK installs over the previous build.
 
 Outputs:
 
-- Desktop: `dist\canary-<version>-win-x64.exe` (the same as `npm run dist`)
-- Android: `android\app\build\outputs\apk\debug\app-debug.apk`
+- Desktop: `dist/` (the same as `npm run dist`) — for example `canary-<version>-win-x64.exe` on Windows, an AppImage on Linux, or a `.dmg` on macOS.
+- Android: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-Android builds need JDK 21, but you don't have to install it yourself: `android/settings.gradle` and `android/gradle/gradle-daemon-jvm.properties` let Gradle download and use the right JDK automatically on the first build (cached in `%USERPROFILE%\.gradle\jdks`). iOS builds are not part of this script.
+Android builds need JDK 21, but you don't have to install it yourself: `android/settings.gradle` and `android/gradle/gradle-daemon-jvm.properties` let Gradle download and use the right JDK automatically on the first build (cached in `~/.gradle/jdks`, or `%USERPROFILE%\.gradle\jdks` on Windows). iOS builds are not part of this script.
 
-### `tools/bump-version.ps1`
+### `tools/bump-version.mjs`
 
 Bumps the version in `package.json`, `package-lock.json` and `VERSION`.
 
-```powershell
-.\tools\bump-version.ps1 -Part patch   # 1.3.11 -> 1.3.12
-.\tools\bump-version.ps1 -Part minor   # 1.3.11 -> 1.4.0
-.\tools\bump-version.ps1 -Part major   # 1.3.11 -> 2.0.0
+```bash
+node tools/bump-version.mjs patch   # 1.3.11 -> 1.3.12
+node tools/bump-version.mjs minor   # 1.3.11 -> 1.4.0
+node tools/bump-version.mjs major   # 1.3.11 -> 2.0.0
 ```
 
-`-Part fix` is an alias for `patch`.
+`fix` is an alias for `patch`.
 
-- `-Changelog` also prepends a dated entry to `CHANGELOG.md`.
-- `-DryRun` shows the next version without changing any files.
+- `--changelog` also prepends a dated entry to `CHANGELOG.md`.
+- `--dry-run` shows the next version without changing any files.
 
 It only edits files: it does not commit, tag or push. The same bump is available through `npm run release` (patch), `npm run release:minor` and `npm run release:major`.
 

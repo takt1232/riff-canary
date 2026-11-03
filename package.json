@@ -9,9 +9,9 @@
     "start": "electron .",
     "test": "node --test",
     "dist": "electron-builder",
-    "release": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/bump-version.ps1 -Part patch",
-    "release:minor": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/bump-version.ps1 -Part minor",
-    "release:major": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/bump-version.ps1 -Part major"
+    "release": "node tools/bump-version.mjs patch",
+    "release:minor": "node tools/bump-version.mjs minor",
+    "release:major": "node tools/bump-version.mjs major"
   },
   "keywords": [],
   "author": "takt1232",
