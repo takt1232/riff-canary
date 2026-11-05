@@ -3362,6 +3362,10 @@ body.perf #sleep-timer-status.active::before {
   background: var(--md-sys-color-on-primary);
   border-color: var(--md-sys-color-on-primary);
 }
+.effect-switch-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 .palette-style-toggle {
   display: flex;

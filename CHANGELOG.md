@@ -2,7 +2,13 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased — renamed to Canary
+## 1.3.17 — 2026-11-05
+
+### Added
+
+- Songs played from Search or the Home page now start a song radio from the song you clicked.
+  A new Settings → Tracks → "Radio from Search and Home" switch (on by default) controls it and is
+  disabled while Song radio is off. Playlists still play their own order.
 
 ### Changed
 
@@ -10,6 +16,12 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
   and the custom URL scheme is `canary://`.
 - Canary starts fresh: settings, profiles, history and other local data from Muriel are not
   imported. On phones this is a separate app and needs a fresh install.
+
+### Fixed
+
+- Starting a radio from the same song again no longer replays the same list. Canary remembers the
+  songs that seed was already given for 24 hours and the next start continues with the next-best
+  unseen songs; if a seed runs out, its list starts over instead of failing.
 
 ## 1.3.16 — 2026-11-03
 

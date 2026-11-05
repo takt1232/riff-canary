@@ -226,7 +226,8 @@
       box.querySelector('.onrepeat-encore').addEventListener('click', () => open(homePeriod === 'all' ? 'all' : homePeriod));
       box.querySelectorAll('.onrepeat-row').forEach((r) => r.addEventListener('click', () => {
         const list = top.map(toTrack);
-        window.CanaryCore.playTrack(list[+r.dataset.i], list, +r.dataset.i);
+        const play = window.CanaryCore.playRadio || window.CanaryCore.playTrack;
+        play(list[+r.dataset.i], list, +r.dataset.i);
       }));
     }, 60);
   }

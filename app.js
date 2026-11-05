@@ -8344,7 +8344,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentList = state.queue;
             clickIndex = indexIn(currentList);
           }
-          playTrack(track, currentList, clickIndex >= 0 ? clickIndex : idx, context);
+          if (context === 'search') {
+            playAsRadio(track, currentList, clickIndex >= 0 ? clickIndex : idx);
+          } else {
+            playTrack(track, currentList, clickIndex >= 0 ? clickIndex : idx, context);
+          }
         });
 
         // A finger tap gets moved onto the nearest element that listens for clicks, and only the buttons did,
@@ -18015,13 +18019,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       const focusedIndex = (row && typeof row._focusedIndex === 'number') ? row._focusedIndex : 0;
       if (curIdx === focusedIndex) {
         if (mode === 'wave') {
-          state.myWaveActive = true;
           const waveQueue = [...myWaveCurrentTracks];
-          playTrack(track, waveQueue, curIdx);
+          if (autoSongRadioEnabled() && navigator.onLine !== false) {
+            playAsRadio(track, waveQueue, curIdx);
+          } else {
+            state.myWaveActive = true;
+            playTrack(track, waveQueue, curIdx);
+          }
         } else {
           state.myWaveActive = false;
           const recentTracks = jumpBackCurrentTracks.length > 0 ? jumpBackCurrentTracks : getJumpBackTracks();
-          playTrack(track, [...recentTracks], curIdx);
+          playAsRadio(track, [...recentTracks], curIdx);
         }
       } else if (row) {
         scrollCarouselTo(row, curIdx);
@@ -18381,7 +18389,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const b = document.createElement('button');
           b.className = 'fy-card';
           b.innerHTML = `<img src="${escapeHtml(listThumb(getTrackThumbUrl(t)) || '')}" data-art="${escapeHtml(JSON.stringify(trackArtCandidates(t)))}" alt="" loading="lazy" decoding="async" onerror="${THUMB_FALLBACK}"><span class="fy-title">${escapeHtml(t.title)}</span><span class="fy-artist-name">${escapeHtml(t.artist)}</span>`;
-          b.addEventListener('click', () => playTrack(t, sec.tracks, i));
+          b.addEventListener('click', () => playAsRadio(t, sec.tracks, i));
           row.appendChild(b);
         });
       }
@@ -18490,7 +18498,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (recent.length >= 5) break;
     }
     recent.forEach((t, i) => {
-      const art = tile('', t.title || 'Untitled', t.artist || '', () => { state.myWaveActive = false; playTrack(t, [...recent], i); });
+      const art = tile('', t.title || 'Untitled', t.artist || '', () => { state.myWaveActive = false; playAsRadio(t, [...recent], i); });
       art.innerHTML = `<img loading="lazy" decoding="async" alt="" src="${escapeHtml(listThumb(spThumb(t)) || spThumb(t))}">`;
     });
     (state.playlists || []).slice(0, Math.max(0, 5 - recent.length)).forEach((pl) => {
@@ -18629,7 +18637,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       title: t.title || 'Untitled',
       sub: t.artist || '',
       explicit: Lib.isTrackExplicit(t),
-      onClick: () => { state.myWaveActive = false; playTrack(t, [...tracks], i); }
+      onClick: () => { state.myWaveActive = false; playAsRadio(t, [...tracks], i); }
     })));
     finishRow(row);
   }
@@ -21006,11 +21014,64 @@ document.addEventListener('DOMContentLoaded', async () => {
   function songRadioEnabled() {
     try { return localStorage.getItem('canary_song_radio') !== '0'; } catch (e) { return true; }
   }
+  // songs played from Search or Home start a radio, unless this is turned off (Song radio must be on too)
+  function radioFromBrowseEnabled() {
+    try { return localStorage.getItem('canary_radio_from_browse') !== '0'; } catch (e) { return true; }
+  }
+  function autoSongRadioEnabled() {
+    return songRadioEnabled() && radioFromBrowseEnabled();
+  }
+  const Rec = window.CanaryRecommend || null;
   function radioSeedOf(t) {
     return { id: t.id || '', title: t.title || '', artist: t.artist || '', platform: t.platform || 'youtube' };
   }
   function radioTrackKey(t) {
+    if (Rec && typeof Rec.trackKey === 'function') return Rec.trackKey(t && t.artist, t && t.title);
     return `${Lib.nameKey(t && t.artist)}::${Lib.nameKey(t && t.title)}`;
+  }
+  // ---- radio cursor: the songs a seed selection already got, so starting its radio again goes on with new songs ----
+  const RADIO_HISTORY_STORAGE = 'canary_radio_history_v1';
+  const RADIO_HISTORY_SIGNATURES = 30;
+  function readRadioHistory() {
+    const all = safeJson(RADIO_HISTORY_STORAGE, null);
+    return all && typeof all === 'object' && !Array.isArray(all) ? all : {};
+  }
+  function writeRadioHistory(all) {
+    try { localStorage.setItem(RADIO_HISTORY_STORAGE, JSON.stringify(all)); } catch (e) {}
+  }
+  function radioHistorySignature(seeds) {
+    return Rec && typeof Rec.radioHistoryKey === 'function' ? Rec.radioHistoryKey(seeds, radioTrackKey) : '';
+  }
+  function loadRadioHistory(signature) {
+    if (!signature || !Rec || typeof Rec.trimRadioHistory !== 'function') return null;
+    return Rec.trimRadioHistory(readRadioHistory()[signature]);
+  }
+  function saveRadioHistory(signature, entry) {
+    if (!signature || !entry) return;
+    const all = readRadioHistory();
+    all[signature] = entry;
+    const keys = Object.keys(all);
+    if (keys.length > RADIO_HISTORY_SIGNATURES) {
+      keys.sort((a, b) => (Number(all[a] && all[a].at) || 0) - (Number(all[b] && all[b].at) || 0));
+      keys.slice(0, keys.length - RADIO_HISTORY_SIGNATURES).forEach((k) => { delete all[k]; });
+    }
+    writeRadioHistory(all);
+  }
+  function recordRadioTracks(signature, tracks) {
+    if (!signature || !Rec || typeof Rec.addRadioHistory !== 'function' || !tracks || !tracks.length) return;
+    saveRadioHistory(signature, Rec.addRadioHistory(loadRadioHistory(signature), tracks, { keyOf: radioTrackKey }));
+  }
+  function clearRadioHistory(signature) {
+    if (!signature) return;
+    const all = readRadioHistory();
+    if (!Object.prototype.hasOwnProperty.call(all, signature)) return;
+    delete all[signature];
+    writeRadioHistory(all);
+  }
+  function resetRadioExcludes(r) {
+    r.ids = new Set();
+    r.keys = new Set();
+    r.seeds.forEach((t) => { if (t.id) r.ids.add(String(t.id)); r.keys.add(radioTrackKey(t)); });
   }
   // the radio is on while its songs are still in the queue (playing something else from a list replaces the queue)
   function activeSongRadio() {
@@ -21030,32 +21091,96 @@ document.addEventListener('DOMContentLoaded', async () => {
       }),
     });
     const data = await res.json();
+    r.lastFetchOk = !!(data && data.success);
     const tracks = data && data.success && Array.isArray(data.tracks) ? data.tracks : [];
     // the server already leaves these out; this keeps a repeat out even if it found one under another id
     const fresh = tracks.filter((t) => t && t.title && !r.ids.has(String(t.id || '')) && !r.keys.has(radioTrackKey(t)) && !isBlocked(t));
     fresh.forEach((t) => { if (t.id) r.ids.add(String(t.id)); r.keys.add(radioTrackKey(t)); t._radio = r.id; });
+    if (fresh.length && songRadio.current === r) recordRadioTracks(r.historyKey, fresh);
     return fresh;
   }
-  async function startSongRadio(seeds) {
+  // when a radio couldn't be started from a click, the list it came from becomes the queue again
+  function restoreQueueForCurrent(list, index) {
+    if (!Array.isArray(list) || !list.length || !state.currentTrack) return;
+    const queue = [...list];
+    const at = typeof index === 'number' && index >= 0 && index < queue.length && isSameTrack(queue[index], state.currentTrack)
+      ? index
+      : queue.findIndex((t) => isSameTrack(t, state.currentTrack));
+    if (at < 0) return;
+    state.queue = queue;
+    state.queueIndex = at;
+    state.queueHistory = [at];
+    shuffleBag.next = [];
+    shuffleBag.queue = state.queue;
+    updateQueueBadge();
+  }
+  async function startSongRadio(seeds, options = {}) {
     const list = (seeds || []).filter((t) => t && t.title).slice(0, 5);
-    if (!list.length) return;
+    if (!list.length) return false;
+    const immediate = !!options.immediate && list.length === 1;
+    const historyKey = radioHistorySignature(list);
+    const history = loadRadioHistory(historyKey);
     const r = {
       id: songRadio.nextId++,
       seeds: list,
       label: list.length === 1 ? Tm('Radio · {0}', list[0].title) : Tm('Radio · {0} and {1} more', list[0].title, list.length - 1),
       ids: new Set(), keys: new Set(), loading: true, exhausted: false,
+      historyKey, usedHistory: !!history,
     };
     list.forEach((t) => { if (t.id) r.ids.add(String(t.id)); r.keys.add(radioTrackKey(t)); });
+    if (history) {
+      const ex = Rec && typeof Rec.radioHistoryExclude === 'function' ? Rec.radioHistoryExclude(history) : { ids: [], keys: [] };
+      ex.ids.forEach((id) => r.ids.add(String(id)));
+      ex.keys.forEach((k) => { if (k) r.keys.add(k); });
+    }
     songRadio.current = r;
-    showToast(list.length === 1 ? Tm('Starting radio from "{0}"…', list[0].title) : Tm('Starting radio from {0} songs…', list.length), 'info');
+    if (immediate) {
+      // the clicked song plays at once; its radio fills in behind it
+      state.myWaveActive = false;
+      const seed = state.currentTrack && isSameTrack(state.currentTrack, list[0]) ? state.currentTrack : list[0];
+      seed._radio = r.id;
+      if (seed === state.currentTrack) {
+        state.queue = [seed];
+        state.queueIndex = 0;
+        state.queueHistory = [0];
+        shuffleBag.next = []; shuffleBag.queue = state.queue;
+        updateQueueBadge();
+      } else {
+        playTrack(seed, [seed], 0);
+      }
+      renderSongRadioLabel();
+    } else {
+      showToast(list.length === 1 ? Tm('Starting radio from "{0}"…', list[0].title) : Tm('Starting radio from {0} songs…', list.length), 'info');
+    }
     let tracks = [];
     try { tracks = await fetchSongRadio(r, 25); } catch (e) { console.warn('[radio]', e && e.message); }
+    if (!tracks.length && r.usedHistory && r.lastFetchOk) {
+      // every song this seed can find was already given: forget its cursor and start that list over once
+      // (a failed request leaves the cursor alone, so a network blip cannot wipe it)
+      clearRadioHistory(r.historyKey);
+      r.usedHistory = false;
+      resetRadioExcludes(r);
+      try { tracks = await fetchSongRadio(r, 25); } catch (e) { console.warn('[radio]', e && e.message); }
+    }
     r.loading = false;
-    if (songRadio.current !== r) return; // another radio was started meanwhile
+    if (songRadio.current !== r) return false; // another radio was started meanwhile
     if (!tracks.length) {
       songRadio.current = null;
+      if (immediate) {
+        restoreQueueForCurrent(options.fallback && options.fallback.list, options.fallback && options.fallback.index);
+        renderSongRadioLabel();
+        return false;
+      }
       showToast(navigator.onLine === false ? Tm('Radio needs the internet') : Tm('Couldn\'t find songs for a radio. Try another song'), 'error');
-      return;
+      return false;
+    }
+    if (immediate) {
+      if (activeSongRadio() === r) {
+        state.queue.push(...tracks);
+        updateQueueBadge();
+        renderSongRadioLabel();
+      }
+      return true;
     }
     state.myWaveActive = false;
     if (list.length === 1) {
@@ -21075,6 +21200,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       playTrack(tracks[0], tracks, 0);
     }
     renderSongRadioLabel();
+    return true;
+  }
+  // songs clicked in Search or Home: play straight away, then keep going with a radio like them
+  function playAsRadio(track, fallbackList = null, fallbackIndex = -1) {
+    if (!track) return;
+    if (!autoSongRadioEnabled() || navigator.onLine === false) {
+      playTrack(track, fallbackList, fallbackIndex);
+      return;
+    }
+    startSongRadio([track], { immediate: true, fallback: { list: fallbackList, index: fallbackIndex } });
   }
   async function extendSongRadio() {
     const r = activeSongRadio();
@@ -21112,15 +21247,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   (function setupSongRadio() {
     const toggle = document.getElementById('toggle-song-radio');
+    const browseToggle = document.getElementById('toggle-radio-browse');
+    const applyBrowse = () => {
+      if (!browseToggle) return;
+      const masterOn = songRadioEnabled();
+      browseToggle.disabled = !masterOn;
+      browseToggle.setAttribute('aria-disabled', masterOn ? 'false' : 'true');
+      browseToggle.classList.toggle('active', masterOn && radioFromBrowseEnabled());
+      browseToggle.title = masterOn ? '' : T('Turn on Song radio first');
+    };
     const apply = () => {
       const on = songRadioEnabled();
       document.body.classList.toggle('no-song-radio', !on);
       if (toggle) toggle.classList.toggle('active', on);
+      applyBrowse();
     };
     if (toggle) {
       toggle.addEventListener('click', () => {
         try { localStorage.setItem('canary_song_radio', songRadioEnabled() ? '0' : '1'); } catch (e) {}
         apply();
+      });
+    }
+    if (browseToggle) {
+      browseToggle.addEventListener('click', () => {
+        if (!songRadioEnabled()) return;
+        try { localStorage.setItem('canary_radio_from_browse', radioFromBrowseEnabled() ? '0' : '1'); } catch (e) {}
+        applyBrowse();
       });
     }
     apply();
@@ -21573,6 +21725,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     base: () => `http://127.0.0.1:${state.serverPort}`,
     thumb: (t) => getTrackThumbUrl(t),
     playTrack: (track, list, index) => playTrack(track, list || null, typeof index === 'number' ? index : -1),
+    playRadio: (track, list, index) => playAsRadio(track, list || null, typeof index === 'number' ? index : -1),
     togglePlay: () => togglePlayPause(),
     next: () => playNext(),
     prev: () => playPrev(),

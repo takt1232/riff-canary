@@ -510,17 +510,7 @@ function safeJsonParse(value, fallback) {
 }
 
 function getTrackNormalizedKey(artist, title) {
-  let a = String(artist || '').toLowerCase();
-  let t = String(title || '').toLowerCase();
-  t = t.replace(/\s*\([^)]*official[^)]*\)/gi, '')
-       .replace(/\s*\[[^\]]*\]/gi, '')
-       .replace(/\s*\([^)]*(video|audio|remaster(ed)?|lyrics?|visualizer)[^)]*\)/gi, '');
-  t = t.replace(/\s*(feat\.?|ft\.?)\s+[^(\[-]+/gi, '')
-       .replace(/\s*\((feat\.?|ft\.?)[^)]*\)/gi, '');
-  a = a.replace(/\s*(feat\.?|ft\.?)\s+.*$/gi, '');
-  a = a.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-  t = t.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-  return `${a}::${t}`;
+  return recommendCore.trackKey(artist, title);
 }
 
 function normalizeTrack(track) {

@@ -19,6 +19,22 @@
   const NOT_MUSIC = /\b(?:documentary|interview|trailer|reaction|behind the scenes|making of|podcast|full album|live stream)\b/i;
   const fold = (x) => String(x || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
+  // The artist+title key shared by the server and the app (spaces kept, release noise dropped), so the
+  // songs the app asks the server to leave out are the same keys the server ranks with.
+  function trackKey(artist, title) {
+    let a = String(artist || '').toLowerCase();
+    let t = String(title || '').toLowerCase();
+    t = t.replace(/\s*\([^)]*official[^)]*\)/gi, '')
+         .replace(/\s*\[[^\]]*\]/gi, '')
+         .replace(/\s*\([^)]*(video|audio|remaster(ed)?|lyrics?|visualizer)[^)]*\)/gi, '');
+    t = t.replace(/\s*(feat\.?|ft\.?)\s+[^(\[-]+/gi, '')
+         .replace(/\s*\((feat\.?|ft\.?)[^)]*\)/gi, '');
+    a = a.replace(/\s*(feat\.?|ft\.?)\s+.*$/gi, '');
+    a = a.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    t = t.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    return `${a}::${t}`;
+  }
+
   // A video's title often carries its artist ("Radiohead - No Surprises (Official Video)"): the song's own name,
   // and the artist the title names (a re-upload's channel is not the artist).
   function cleanVideoTitle(title, artist) {
@@ -175,7 +191,70 @@
     return out;
   }
 
-  const api = { parseLength, cleanVideoTitle, parseWatchPlaylist, parseSimilarTracks, parseSimilarArtists, parseTopTracks, dropUnwanted, mixRadio };
+  // Song radio cursor: the songs a seed set was already given, kept so the next radio from the same
+  // seeds continues with unseen songs instead of replaying the same first page. Pure data, like the
+  // rest of this file: the app stores it in localStorage and sends it back as `exclude`.
+  const RADIO_HISTORY_TTL = 24 * 3600 * 1000;
+  const RADIO_HISTORY_MAX = 150;
+
+  // one signature per seed selection; order-independent, so picking A then B or B then A is the same radio
+  function radioHistoryKey(seeds, keyOf) {
+    const key = typeof keyOf === 'function' ? keyOf : (t) => trackKey(t && t.artist, t && t.title);
+    const parts = list(seeds).map((s) => {
+      const k = key(s);
+      return k ? `${String((s && s.platform) || 'youtube').toLowerCase()}:${k}` : '';
+    }).filter(Boolean);
+    return [...new Set(parts)].sort().join('|');
+  }
+
+  // null when an entry is missing, malformed or older than the ttl
+  function trimRadioHistory(entry, { now = Date.now(), ttl = RADIO_HISTORY_TTL } = {}) {
+    if (!entry || !Array.isArray(entry.tracks)) return null;
+    const at = num(entry.at);
+    if (at && now - at > ttl) return null;
+    return { at: at || now, tracks: entry.tracks.filter((t) => t && (t.id || t.key)) };
+  }
+
+  // `entry` plus `tracks`, de-duplicated by id and key, oldest first and capped to `max`
+  function addRadioHistory(entry, tracks, { now = Date.now(), ttl = RADIO_HISTORY_TTL, max = RADIO_HISTORY_MAX, keyOf } = {}) {
+    const key = typeof keyOf === 'function' ? keyOf : (t) => trackKey(t && t.artist, t && t.title);
+    const out = [];
+    const ids = new Set();
+    const keys = new Set();
+    const push = (t) => {
+      if (!t) return;
+      const id = t.id ? String(t.id) : '';
+      // a stored entry already carries its key; a fresh track has to be keyed from artist/title
+      const k = t.key ? String(t.key) : (key(t) || '');
+      if (!id && !k) return;
+      if ((id && ids.has(id)) || (k && keys.has(k))) return;
+      if (id) ids.add(id);
+      if (k) keys.add(k);
+      out.push({ id, key: k });
+    };
+    const prev = trimRadioHistory(entry, { now, ttl });
+    if (prev) prev.tracks.forEach(push);
+    list(tracks).forEach(push);
+    return { at: now, tracks: out.slice(-Math.max(1, max)) };
+  }
+
+  function radioHistoryExclude(entry, { now = Date.now(), ttl = RADIO_HISTORY_TTL } = {}) {
+    const trimmed = trimRadioHistory(entry, { now, ttl });
+    if (!trimmed) return { ids: [], keys: [] };
+    const ids = [];
+    const keys = [];
+    for (const t of trimmed.tracks) {
+      if (t.id && !ids.includes(t.id)) ids.push(t.id);
+      if (t.key && !keys.includes(t.key)) keys.push(t.key);
+    }
+    return { ids, keys };
+  }
+
+  const api = {
+    parseLength, cleanVideoTitle, parseWatchPlaylist, parseSimilarTracks, parseSimilarArtists, parseTopTracks, dropUnwanted, mixRadio, trackKey,
+    radioHistoryKey, trimRadioHistory, addRadioHistory, radioHistoryExclude,
+    RADIO_HISTORY_TTL, RADIO_HISTORY_MAX,
+  };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.CanaryRecommend = api;
 })(typeof window !== 'undefined' ? window : globalThis);

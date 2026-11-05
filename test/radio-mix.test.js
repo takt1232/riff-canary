@@ -44,3 +44,12 @@ test('mixRadio caps songs per artist and the total', () => {
   assert.deepStrictEqual(mixRadio([], {}), []);
   assert.deepStrictEqual(mixRadio([null, [null, { artist: 'x' }]], {}), []);
 });
+
+test('mixRadio walks past excluded songs to fill the limit (the radio cursor relies on it)', () => {
+  const many = Array.from({ length: 60 }, (_, i) => t(`Artist ${i}`, `song ${i}`, 1 - i / 100));
+  const keyOf = (x) => `${x.artist}::${x.title}`;
+  const excluded = many.slice(0, 25).map(keyOf);
+  const out = mixRadio([many], { limit: 25, exclude: { keys: excluded }, keyOf });
+  assert.strictEqual(out.length, 25);
+  assert.strictEqual(out[0].artist, 'Artist 25');
+});

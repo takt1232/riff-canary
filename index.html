@@ -1451,6 +1451,15 @@
                 <button type="button" class="effect-switch-btn active" id="toggle-song-radio"><span class="thumb"></span></button>
               </div>
             </div>
+            <div class="setting-item">
+              <div class="setting-item-top" style="align-items: center;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span class="setting-name">Radio from Search and Home</span>
+                  <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);">Songs you play from Search or the Home page start a radio of songs like them. Turn off to play the list you clicked from instead. Needs Song radio</span>
+                </div>
+                <button type="button" class="effect-switch-btn active" id="toggle-radio-browse"><span class="thumb"></span></button>
+              </div>
+            </div>
             <div class="setting-item" id="setting-blocked-items">
               <div class="setting-item-top" style="align-items: center;">
                 <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -3650,6 +3659,7 @@
   <script src="track-match.js"></script>
   <script src="library-tools.js"></script>
   <script src="library-pages.js"></script>
+  <script src="recommend-core.js"></script>
   <script src="build-info.js"></script>
   <script src="share-link.js"></script>
   <script src="audio-route.js"></script>
