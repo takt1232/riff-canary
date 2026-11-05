@@ -215,11 +215,45 @@ function installApk(apk, options) {
     if (result.error) throw new ScriptError(`Could not run adb: ${result.error.message}`);
     if (result.status !== 0) throw new ScriptError(`adb devices failed (exit code ${result.status ?? 'unknown'}).`);
 
-    const devices = result.stdout
-      .split(/\r?\n/)
-      .map((line) => /^(\S+)\s+device$/.exec(line.trim())?.[1])
-      .filter(Boolean);
+    // `adb devices` prints a header, then one line per device. The serial itself
+    // can contain spaces: wireless debugging advertises mDNS names such as
+    // "adb-XXXX-YYYY (2)._adb-tls-connect._tcp". So split the state off from the
+    // right instead of assuming the first token is the whole serial: drop any
+    // "key:value" columns added by `adb devices -l`, then the remaining last token
+    // is the state. Keep devices that are not ready so the error can say why.
+    const devices = [];
+    const unavailable = [];
+    for (const raw of String(result.stdout ?? '').split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('*') || /^List of devices attached/i.test(line)) continue;
+
+      let deviceSerial;
+      let state;
+      const noPermissions = /^(.*?)\s+no permissions$/i.exec(line);
+      if (noPermissions) {
+        deviceSerial = noPermissions[1];
+        state = 'no permissions';
+      } else {
+        const tokens = line.split(/\s+/);
+        while (tokens.length > 1 && /^[^:\s]+:\S+$/.test(tokens[tokens.length - 1])) tokens.pop();
+        state = tokens.pop();
+        deviceSerial = tokens.join(' ');
+      }
+      if (!deviceSerial || !state) continue;
+
+      if (state === 'device') {
+        devices.push(deviceSerial);
+      } else {
+        unavailable.push(`${deviceSerial} (${state})`);
+      }
+    }
     if (devices.length === 0) {
+      if (unavailable.length > 0) {
+        throw new ScriptError(
+          `Android device found but not ready: ${unavailable.join(', ')}. ` +
+            'Make sure USB or wireless debugging is enabled and that the phone authorized this computer, then try again.',
+        );
+      }
       throw new ScriptError('No Android device is connected. Connect the phone (USB or wireless ADB) and try again.');
     }
     serial = devices[0];
