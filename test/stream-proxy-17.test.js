@@ -52,7 +52,15 @@ test('app.js uses the same proxy rule and falls back to the proxy before a fresh
 
 test('server lookups record the headers and the proxy uses them', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.equal((server.match(/rememberStreamHeaders\(/g) || []).length, 4);
+  assert.equal((server.match(/rememberStreamHeaders\(/g) || []).length, 5);
   assert.match(server, /streamHeaders\.get\(targetUrl\)/);
   assert.doesNotMatch(server, /'-g', '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio\/best'\];\n\s+if \((ytTarget|target)\.youtube\)/);
+});
+
+test('googlevideo requests carry a YouTube origin and referer unless yt-dlp gave its own', () => {
+  const h = ss.upstreamHeaders({ range: 'bytes=0-' }, { 'User-Agent': 'yt' }, { googlevideo: true });
+  assert.equal(h.origin, 'https://www.youtube.com');
+  assert.equal(h.referer, 'https://www.youtube.com/');
+  assert.equal(ss.upstreamHeaders({}, { Referer: 'https://x/' }, { googlevideo: true }).referer, 'https://x/');
+  assert.equal(ss.upstreamHeaders({}, null).origin, undefined);
 });

@@ -81,6 +81,16 @@ https.get = (url, opts, cb) => {
   });
   return r;
 };
+// yt-fast looks YouTube songs up directly with https.request, so keep that route offline too; otherwise a
+// machine with internet resolves the song there and never exercises the SoundCloud fallback below
+https.request = (url, opts, cb) => {
+  const r = new EventEmitter();
+  r.write = () => {};
+  r.end = () => {};
+  r.destroy = () => {};
+  setImmediate(() => r.emit('error', new Error('offline')));
+  return r;
+};
 
 const scResolved = [];
 // SoundCloud's api, asked which search results can play: track 5 is DRM-only; everything else is offline

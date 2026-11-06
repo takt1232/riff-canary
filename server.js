@@ -23,6 +23,7 @@ const { searchSoundcloudApi } = require('./soundcloud-search');
 const { copyStreamToCache } = require('./cache-copy');
 const streamSource = require('./stream-source');
 const downloadProgressHelper = require('./download-progress');
+const ytFast = require('./yt-fast');
 // request headers yt-dlp would use for each media URL it resolved (#17), for the audio proxy
 const streamHeaders = new Map();
 function rememberStreamHeaders(url, headers) {
@@ -31,6 +32,24 @@ function rememberStreamHeaders(url, headers) {
   streamHeaders.set(url, headers);
   while (streamHeaders.size > 200) streamHeaders.delete(streamHeaders.keys().next().value);
 }
+// The fast way to a YouTube stream (yt-fast.js, one API request instead of a yt-dlp run); null when
+// YouTube doesn't give this song out that way, and the caller then asks yt-dlp
+async function fastYouTubeStream(trackUrl, id) {
+  const vid = ytFast.videoId(id) || ytFast.videoId(trackUrl);
+  if (!vid) return null;
+  const started = Date.now();
+  try {
+    const r = await ytFast.lookup(vid);
+    if (YTDLP_DEBUG) logger.log('info', `yt-fast ${vid}: ${r ? 'itag ' + r.itag : 'no stream'} in ${Date.now() - started} ms`);
+    if (!r) return null;
+    rememberStreamHeaders(r.url, r.headers);
+    return r.url;
+  } catch (e) {
+    if (YTDLP_DEBUG) logger.log('info', `yt-fast ${vid} failed: ${e.message}`);
+    return null;
+  }
+}
+
 // CANARY_DEBUG_YTDLP=1 logs every yt-dlp run with its reason and arguments
 const YTDLP_DEBUG = !!process.env.CANARY_DEBUG_YTDLP;
 const AUDIO_PROXY_DEBUG = YTDLP_DEBUG || process.env.CANARY_DEBUG === '1';
@@ -360,7 +379,9 @@ function cleanTrackId(id) {
 // Given to yt-dlp as music.youtube.com links without our player clients they hit YouTube Music's web client,
 // whose media URLs answer "HTTP Error 403: Forbidden" on many desktops (#18). Extract every YouTube-family
 // track from a plain youtube.com watch URL with the same clients the YouTube source uses.
-const YT_PLAYER_CLIENTS = 'youtube:player_client=default,android';
+// web_embedded answers fastest and needs no login (Riff 44); android, which needs no JavaScript challenge,
+// covers videos that can't be embedded
+const YT_PLAYER_CLIENTS = 'youtube:player_client=web_embedded,android';
 const YT_RETRY_CLIENTS = 'youtube:player_client=tv,web_safari,android_vr';
 function youtubeVideoId(trackUrl) {
   try {
@@ -1849,15 +1870,18 @@ async function prefetchTrack(trackUrl, trackId, platform, meta = null, priority 
     const target = youtubeExtractTarget(trackUrl, cleanId, platform);
     trackUrl = target.url;
     if (!isSafeMediaUrl(trackUrl)) return;
-    const args = ['--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best'];
-    if (target.youtube) args.push('--extractor-args', YT_PLAYER_CLIENTS);
-    args.push('--', trackUrl);
+    let streamUrl = target.youtube ? await fastYouTubeStream(trackUrl, cleanId) : null;
+    if (!streamUrl) {
+      const args = ['--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best'];
+      if (target.youtube) args.push('--extractor-args', YT_PLAYER_CLIENTS);
+      args.push('--', trackUrl);
 
-    // the same lookup (same arguments and key) as /api/stream-info: if the song is started meanwhile, it waits for this run
-    const raw = await executeYtDlp(args, 18000, { key: `g:${trackUrl}`, priority, reason: 'prefetch' });
-    const found = streamSource.parseLookup(raw);
-    const streamUrl = found.url;
-    rememberStreamHeaders(streamUrl, found.headers);
+      // the same lookup (same arguments and key) as /api/stream-info: if the song is started meanwhile, it waits for this run
+      const raw = await executeYtDlp(args, 18000, { key: `g:${trackUrl}`, priority, reason: 'prefetch' });
+      const found = streamSource.parseLookup(raw);
+      streamUrl = found.url;
+      rememberStreamHeaders(streamUrl, found.headers);
+    }
 
     if (streamUrl) {
       const isHls = streamUrl.includes('.m3u8');
@@ -2514,7 +2538,9 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
 
   let streamUrl = null;
 
-  if (isSafeMediaUrl(trackUrl)) {
+  if (isSafeMediaUrl(trackUrl) && ytTarget.youtube) streamUrl = await fastYouTubeStream(trackUrl, cleanId);
+
+  if (!streamUrl && isSafeMediaUrl(trackUrl)) {
     try {
       const args = ['--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best'];
       if (ytTarget.youtube) args.push('--extractor-args', YT_PLAYER_CLIENTS);
@@ -2886,7 +2912,7 @@ async function handleAudioProxy(req, res, targetUrl) {
     // the headers yt-dlp resolved this URL with (#17): YouTube serves an android/tv client's stream only
     // to a request that looks like that client, not to Chromium's own User-Agent
     const ytHeaders = streamHeaders.get(targetUrl) || null;
-    const headers = streamSource.upstreamHeaders(req.headers, ytHeaders);
+    const headers = streamSource.upstreamHeaders(req.headers, ytHeaders, { googlevideo: streamSource.isGoogleVideoUrl(targetUrl) });
     const host = (() => { try { return parsed.host; } catch (_) { return '?'; } })();
     let clientGone = false;
     let proxyReq = null;
