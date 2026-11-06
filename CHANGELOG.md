@@ -4,6 +4,13 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
 
 ## 1.3.18 — 2026-11-06
 
+### Changed
+
+- Songs start faster on computers: YouTube links are looked up directly first, with yt-dlp only as a
+  fallback when YouTube does not hand them out that way.
+- The next song is looked up once the current one has played for 10 seconds, and a stream that stalls
+  mid-song is looked up again after 12 seconds and continues where it stopped.
+
 ### Fixed
 
 - Scrolling up in the phone queue sheet no longer dismisses it: the swipe-to-close gesture only
@@ -11,6 +18,7 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
 - Thumbnails in long track lists no longer blink while scrolling. Rows that stay on screen are kept
   in the document instead of being rebuilt, and the virtual spacers now use the real row height.
 - The phone queue no longer pans a few pixels sideways.
+- Tapping a song in the queue no longer scrolls the list back to the top.
 
 ## 1.3.17 — 2026-11-05
 

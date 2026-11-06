@@ -3954,7 +3954,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.currentTrackIndexInContext = startIndex;
 
     if (queueList) {
-      state.queue = [...queueList];
+      // The queue itself arrives as state.queue: keep the reference so updateQueueBadge does not
+      // rebuild the list (and reset its scroll) just because a row was tapped.
+      state.queue = queueList === state.queue ? queueList : [...queueList];
       shuffleBag.next = [];
       if (startIndex >= 0 && startIndex < state.queue.length && isSameTrack(state.queue[startIndex], track)) {
         state.queueIndex = startIndex;
@@ -9339,8 +9341,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       queueRerender = requestAnimationFrame(() => {
         queueRerender = 0;
         const list = el.queueTracksList;
-        // a plain skip keeps the same queue (the row highlight follows on its own); only redraw when it changed
-        if (list && (list._renderedQueue !== state.queue || list._renderedLen !== state.queue.length)) renderQueueView();
+        // A plain skip keeps the same queue (the row highlight follows on its own); only redraw when
+        // it changed. Comparing entries, not the array reference, because playing a row re-records
+        // the same songs in a new array and rebuilding the list scrolled it back to the top.
+        const same = list && list._renderedQueue && list._renderedLen === state.queue.length &&
+          list._renderedQueue.every((t, i) => t === state.queue[i]);
+        if (list && !same) renderQueueView();
       });
     }
   }
@@ -9348,7 +9354,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function renderQueueView() {
     if (!el.queueTracksList) return;
     renderTracks(el.queueTracksList, state.queue, 'queue');
-    el.queueTracksList._renderedQueue = state.queue;
+    // a snapshot, so an in-place reorder is still detected by updateQueueBadge
+    el.queueTracksList._renderedQueue = state.queue.slice();
     el.queueTracksList._renderedLen = state.queue.length;
   }
 
