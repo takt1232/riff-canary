@@ -40,14 +40,22 @@
     openSheet();
   });
 
-  // swipe down on the sheet's top area to close it
+  // swipe down on the sheet's top area to close it, unless the finger starts in a pane
+  // that is already scrolled (scrolling up moves the finger down, which looked like a dismiss)
   let startY = null;
+  const scrollablePane = (target) => {
+    for (let n = target; n && n !== panel; n = n.parentElement) {
+      const style = getComputedStyle(n);
+      if (/(auto|scroll)/.test(style.overflowY) && n.scrollHeight > n.clientHeight + 1) return n;
+    }
+    return null;
+  };
   panel.addEventListener('touchstart', (e) => {
     const t = e.touches[0];
-    const lyrics = document.getElementById('lyrics-container');
     // a finger on a seek bar or slider is seeking, not closing the sheet (#21)
     if (e.target.closest('input[type="range"], .scrubber-track-container, [role="slider"]')) { startY = null; return; }
-    startY = (lyrics && lyrics.contains(e.target) && lyrics.scrollTop > 0) ? null : t.clientY;
+    const scroller = scrollablePane(e.target);
+    startY = scroller && scroller.scrollTop > 0 ? null : t.clientY;
   }, { passive: true });
   // one transform write per frame, and no CSS transition while the finger drags (it lagged behind)
   let dragY = 0, dragRaf = 0;

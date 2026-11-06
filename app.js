@@ -8632,11 +8632,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    const itemHeight = 64;
     const overscan = 15;
     
     function renderChunk() {
       if (!scrollParent || container._isDraggingReorder) return;
+
+      // Measure the real row pitch once: a phone row is ~60px and a desktop one ~68px, so treating
+      // every row as 64px changed the list's height each time the window moved.
+      if (!container._rowPitch) {
+        const rows = container.querySelectorAll(':scope > .track-row');
+        if (rows.length > 1) container._rowPitch = rows[1].offsetTop - rows[0].offsetTop;
+        else if (rows.length === 1) container._rowPitch = rows[0].offsetHeight + (parseFloat(getComputedStyle(container).rowGap) || 0);
+      }
+      const itemHeight = container._rowPitch || 64;
+
       const parentRect = scrollParent.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       const relativeTop = containerRect.top - parentRect.top + scrollParent.scrollTop;
@@ -8656,18 +8665,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       container._lastEndIndex = endIndex;
       
       const currentCanonicalId = state.currentTrack ? getTrackCanonicalId(state.currentTrack) : '';
-      const fragment = document.createDocumentFragment();
-      for (let idx = startIndex; idx < endIndex; idx++) {
-         const track = tracks[idx];
-         const row = createTrackRow(track, idx, currentCanonicalId, context, tracks, container);
-         if (container._hasInitialRendered) row.style.animation = 'none';
-         fragment.appendChild(row);
+      const makeRows = (from, to) => {
+        const fragment = document.createDocumentFragment();
+        for (let idx = from; idx < to; idx++) {
+          const row = createTrackRow(tracks[idx], idx, currentCanonicalId, context, tracks, container);
+          if (container._hasInitialRendered) row.style.animation = 'none';
+          fragment.appendChild(row);
+        }
+        return fragment;
+      };
+
+      // Remove only the rows that left the window. Rows that stay are never detached: taking an
+      // <img> out of the document made phones drop its decoded thumbnail for a frame.
+      Array.from(container.querySelectorAll(':scope > .track-row')).forEach((row) => {
+        const i = Number(row.dataset.trackIndex);
+        if (i < startIndex || i >= endIndex) row.remove();
+      });
+
+      const rest = container.querySelectorAll(':scope > .track-row');
+      if (!rest.length) {
+        container.appendChild(makeRows(startIndex, endIndex));
+      } else {
+        const first = Number(rest[0].dataset.trackIndex);
+        const last = Number(rest[rest.length - 1].dataset.trackIndex);
+        if (startIndex < first) container.insertBefore(makeRows(startIndex, first), rest[0]);
+        if (last + 1 < endIndex) container.appendChild(makeRows(last + 1, endIndex));
       }
-      
-      container.innerHTML = '';
+
       container.style.paddingTop = `${startIndex * itemHeight}px`;
       container.style.paddingBottom = `${(tracks.length - endIndex) * itemHeight}px`;
-      container.appendChild(fragment);
       container._hasInitialRendered = true;
       highlightPlayingRow();
     }

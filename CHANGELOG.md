@@ -2,6 +2,16 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.3.18 — 2026-11-06
+
+### Fixed
+
+- Scrolling up in the phone queue sheet no longer dismisses it: the swipe-to-close gesture only
+  starts when the list is already at the top.
+- Thumbnails in long track lists no longer blink while scrolling. Rows that stay on screen are kept
+  in the document instead of being rebuilt, and the virtual spacers now use the real row height.
+- The phone queue no longer pans a few pixels sideways.
+
 ## 1.3.17 — 2026-11-05
 
 ### Added
