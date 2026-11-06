@@ -8656,7 +8656,8 @@ body.perf .art-in { animation: none; }
 .drawer-pane { display: flex; flex-direction: column; gap: 16px; min-height: 0; flex: 1; }
 .drawer-pane.hidden { display: none !important; }
 #drawer-now { overflow: hidden; }
-#drawer-queue { overflow-y: auto; display: block; }
+/* the list's negative side margins made the pane 8px wider than its content box, so it could be dragged sideways */
+#drawer-queue { overflow-y: auto; overflow-x: hidden; display: block; }
 #drawer-queue .drawer-queue-head { padding-bottom: 8px; }
 .drawer-queue-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .drawer-queue-title { font-weight: 700; font-size: calc(14px * var(--font-scale, 1)); }
