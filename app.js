@@ -655,6 +655,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     isRepeat: localStorage.getItem('canary_repeat') === '1',
     isShuffle: localStorage.getItem('canary_shuffle') === '1',
     isAutoRemix: false,
+    // the playlist whose Mix transitions are active for the current playback (null for ordinary queues)
+    mixPlaylistId: null,
+    mixRateOverride: null,
     myWaveActive: false,
     _isNaturalEnding: false,
     _skipRecordedFor: null,
@@ -699,6 +702,55 @@ document.addEventListener('DOMContentLoaded', async () => {
                           riffFont: localStorage.getItem('canary_font') || 'google'
   };
 
+  // Canary Mix preparation state. Analysis itself is cached per track; this only tracks the visible
+  // preparation job. Strict gating: Mix cannot be enabled while any unique song is unprocessed.
+  const mixPrep = {
+    playlistId: null,
+    panelPlaylistId: null,
+    running: false,
+    paused: false,
+    cancelled: false,
+    jobToken: 0,
+    abort: null,
+    currentTitle: '',
+    currentPhase: 'analysis',
+    lastError: '',
+    statuses: new Map(),
+    cacheEnabled: true,
+    cacheTotal: 0,
+    cacheDone: 0,
+    cacheFailed: 0,
+    cacheStatuses: new Map(),
+    cacheOnly: false
+  };
+  const mixAnalysisMemo = new Map();
+  const MIX_VERSION = (window.CanaryMixPrep && window.CanaryMixPrep.DEFAULT_VERSION) || 1;
+  let mixRateTimer = null;
+  function applyMixRate(rate, durationSec) {
+    const a = el.nativeAudio;
+    if (!a || !(rate > 0) || !Number.isFinite(rate)) return;
+    const safe = Math.max(0.5, Math.min(2, rate));
+    if (Math.abs(safe - (a.playbackRate || 1)) < 0.001) return;
+    state.mixRateOverride = safe;
+    try {
+      a.preservesPitch = true;
+      a.webkitPreservesPitch = true;
+      a.defaultPlaybackRate = safe;
+      a.playbackRate = safe;
+    } catch (e) {}
+    if (mixRateTimer) clearTimeout(mixRateTimer);
+    mixRateTimer = setTimeout(() => {
+      mixRateTimer = null;
+      state.mixRateOverride = null;
+      applyAudioSettings();
+      updateMediaPositionState();
+    }, Math.max(800, (Number(durationSec) || 0) * 1000 + 350));
+  }
+  function clearMixRate() {
+    if (mixRateTimer) { clearTimeout(mixRateTimer); mixRateTimer = null; }
+    state.mixRateOverride = null;
+  }
+
   function migrateAddedAt() {
     // the same song favourited from several places (album row, player bar, search) was kept once per source (#10)
     const favorites = backfillAddedAt(dedupeFavoriteTracks(state.favorites), true);
@@ -719,6 +771,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   migrateAddedAt();
+
+  // One-time conversion from the old playlist-wide Mix settings / track.mixOut overrides to explicit
+  // per-pair transitions. Untouched playlists (no Mix state) are left alone.
+  (function migrateMixTransitions() {
+    const MT = window.CanaryMixTransitions;
+    if (!MT) return;
+    let changed = false;
+    for (const pl of state.playlists) {
+      if (!pl || !pl.mix) continue;
+      const legacy = MT.hasLegacy ? MT.hasLegacy(pl) : false;
+      if (!legacy && !pl.mix.enabled && !pl.mix.preparedAt) continue;
+      if (MT.migrate(pl)) changed = true;
+    }
+    if (changed) {
+      try { localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists)); } catch (e) {}
+    }
+  })();
 
   applyFont(state.riffFont);
 
@@ -1800,6 +1869,53 @@ document.addEventListener('DOMContentLoaded', async () => {
                           favoritesSort: document.getElementById('favorites-sort'),
                           playlistSearchInput: document.getElementById('playlist-search-input'),
                           playlistSort: document.getElementById('playlist-sort'),
+                          btnMixPlaylist: document.getElementById('btn-mix-playlist'),
+                          btnMixPlaylistLabel: document.getElementById('btn-mix-playlist-label'),
+                          btnMixSettings: document.getElementById('btn-mix-settings'),
+                          mixPrepPanel: document.getElementById('mix-prep-panel'),
+                          mixPrepTitle: document.getElementById('mix-prep-title'),
+                          mixPrepSubtitle: document.getElementById('mix-prep-subtitle'),
+                          mixPrepCount: document.getElementById('mix-prep-count'),
+                          mixPrepProgress: document.getElementById('mix-prep-progress'),
+                          mixPrepBar: document.getElementById('mix-prep-bar'),
+                          mixPrepCurrent: document.getElementById('mix-prep-current'),
+                          mixCacheRow: document.getElementById('mix-cache-row'),
+                          mixCacheAudio: document.getElementById('mix-cache-audio'),
+                          mixCacheHint: document.getElementById('mix-cache-hint'),
+                          mixCacheProgress: document.getElementById('mix-cache-progress'),
+                          mixCacheBar: document.getElementById('mix-cache-bar'),
+                          mixCacheCount: document.getElementById('mix-cache-count'),
+                          mixPrepCache: document.getElementById('mix-prep-cache'),
+                          mixTransitionModal: document.getElementById('mix-transition-modal'),
+                          mixTransitionTracks: document.getElementById('mix-transition-tracks'),
+                          mixTransitionEnabled: document.getElementById('mix-transition-enabled'),
+                          mixTransitionWave: document.getElementById('mix-transition-wave'),
+                          mixTransitionCues: document.getElementById('mix-transition-cues'),
+                          mixTransitionPreset: document.getElementById('mix-transition-preset'),
+                          mixTransitionBars: document.getElementById('mix-transition-bars'),
+                          mixTransitionCurve: document.getElementById('mix-transition-curve'),
+                          mixTransitionBpm: document.getElementById('mix-transition-bpm'),
+                          mixTrOutLow: document.getElementById('mix-tr-out-low'),
+                          mixTrOutMid: document.getElementById('mix-tr-out-mid'),
+                          mixTrOutHigh: document.getElementById('mix-tr-out-high'),
+                          mixTrInLow: document.getElementById('mix-tr-in-low'),
+                          mixTrInMid: document.getElementById('mix-tr-in-mid'),
+                          mixTrInHigh: document.getElementById('mix-tr-in-high'),
+                          mixTrFilter: document.getElementById('mix-tr-filter'),
+                          mixTrOutLowVal: document.getElementById('mix-tr-out-low-val'),
+                          mixTrOutMidVal: document.getElementById('mix-tr-out-mid-val'),
+                          mixTrOutHighVal: document.getElementById('mix-tr-out-high-val'),
+                          mixTrInLowVal: document.getElementById('mix-tr-in-low-val'),
+                          mixTrInMidVal: document.getElementById('mix-tr-in-mid-val'),
+                          mixTrInHighVal: document.getElementById('mix-tr-in-high-val'),
+                          mixTrFilterVal: document.getElementById('mix-tr-filter-val'),
+                          mixTransitionReset: document.getElementById('mix-transition-reset'),
+                          mixTransitionCancel: document.getElementById('mix-transition-cancel'),
+                          mixTransitionSave: document.getElementById('mix-transition-save'),
+                          mixPrepStart: document.getElementById('mix-prep-start'),
+                          mixPrepRetry: document.getElementById('mix-prep-retry'),
+                          mixPrepCancel: document.getElementById('mix-prep-cancel'),
+                          mixPrepClose: document.getElementById('mix-prep-close'),
                           favoritesSubtitle: document.getElementById('favorites-subtitle'),
                           localTracksList: document.getElementById('local-tracks-list'),
                           localSearchInput: document.getElementById('local-search-input'),
@@ -3677,8 +3793,74 @@ document.addEventListener('DOMContentLoaded', async () => {
   // in. Everything else (queue, now playing, scrobbling, media session) follows the main player as for any
   // next song. Falls back to the plain fade-out when the song can't be opened twice (hls.js / blob sources),
   // and on iPhones, where a player's volume can't be changed (so neither song could fade).
-  const xfade = { prep: null, tail: null, handingOver: false, fadeInRaf: 0 };
+  // One reusable second player for Mix/the crossfade tail. Keeping the element (and its Web Audio
+  // MediaElementSource) for the whole session avoids piling up source nodes on every transition.
+  const mixTailEl = typeof Audio === 'function' ? new Audio() : null;
+  if (mixTailEl) mixTailEl.preload = 'auto';
+  const xfade = { prep: null, tail: null, handingOver: false, fadeInRaf: 0, pendingPlan: null, pendingEntry: null, entrySeek: null };
   const crossfadeSeconds = () => parseInt(localStorage.getItem('canary_crossfade') || '0', 10) || 0;
+
+  // A Mix transition is built from the prepared analyses of this song and the one that will follow it.
+  // Any missing/fallback analysis simply returns null, and the ordinary crossfade setting takes over.
+  function currentMixPlan(end) {
+    if (!state.mixPlaylistId || state.isShuffle || !window.CanaryMixCore || !window.CanaryMixTransitions) return null;
+    const pl = state.playlists.find((p) => p.id === state.mixPlaylistId);
+    if (!pl || !pl.mix || !pl.mix.enabled) return null;
+    const nextTrack = state.queue && state.queue.slice(state.queueIndex + 1).find((t) => !isBlocked(t));
+    if (!nextTrack || !state.currentTrack) return null;
+    // Per-pair config only. No playlist-wide preset, no fallback to another edge's settings.
+    const config = window.CanaryMixTransitions.transitionFor(pl, state.currentTrack, nextTrack);
+    if (!config || config.enabled === false) return null;
+    const fromAnalysis = mixGetAnalysis(state.currentTrack);
+    const toAnalysis = mixGetAnalysis(nextTrack);
+    if (!fromAnalysis || !toAnalysis || fromAnalysis.fallback || toAnalysis.fallback) {
+      // A terminal fallback still gets a clean standard fade instead of the listener's global Crossfade 0.
+      const duration = Math.min(6, Math.max(2, (end || 0) / 4));
+      if (!(duration > 0)) return null;
+      return {
+        v: window.CanaryMixCore.VERSION,
+        fallback: true,
+        preset: 'fade',
+        bars: 0,
+        bpmMatch: false,
+        duration,
+        wallDuration: duration,
+        point: Math.max(0, end - duration),
+        end,
+        curves: window.CanaryMixCore.curvesForPreset('fade'),
+        toTrack: nextTrack,
+        entry: 0,
+        rate: null,
+        playlistId: pl.id,
+        edgeKey: window.CanaryMixTransitions.edgeKey(state.currentTrack, nextTrack)
+      };
+    }
+    const settings = window.CanaryMixCore.normalizeSettings(config);
+    const rate = (el.nativeAudio && el.nativeAudio.playbackRate) || 1;
+    const plan = window.CanaryMixCore.planTransition({
+      fromAnalysis,
+      toAnalysis,
+      settings,
+      end,
+      playbackRate: rate
+    });
+    if (!plan) return null;
+    plan.playlistId = pl.id;
+    plan.edgeKey = window.CanaryMixTransitions.edgeKey(state.currentTrack, nextTrack);
+    plan.toTrack = nextTrack;
+    plan.entry = config.entry != null && Number.isFinite(Number(config.entry))
+      ? Number(config.entry)
+      : window.CanaryMixCore.entryPoint(toAnalysis);
+    plan.rate = settings.bpmMatch ? window.CanaryMixCore.matchedRate(fromAnalysis, toAnalysis, rate) : null;
+    return plan;
+  }
+
+  function resetMixPlayback() {
+    xfade.pendingPlan = null;
+    xfade.pendingEntry = null;
+    clearMixRate();
+    if (audioEngine && audioEngine.cancelMixTransition) audioEngine.cancelMixTransition();
+  }
   let volumeWorks = null;
   function elementVolumeWorks() {
     if (volumeWorks === null) {
@@ -3715,6 +3897,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!t) return;
     xfade.tail = null;
     clearInterval(t.loop);
+    if (t.webAudio) {
+      if (audioEngine && audioEngine.cancelMixTransition) audioEngine.cancelMixTransition();
+      disposeTailEl(t.el);
+      return;
+    }
     if (!(fadeSec > 0) || t.el.paused) { disposeTailEl(t.el); return; }
     const from = t.el.volume;
     const started = performance.now();
@@ -3734,24 +3921,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     return Math.max(0, (t.end - (t.el.currentTime || 0)) / (t.el.playbackRate || 1));
   }
   // the second player opened at the crossfade point, ready before it's needed
-  function prepareCrossfade(point, end) {
+  function prepareCrossfade(point, end, plan = null, catchUp = false) {
     const a = el.nativeAudio;
     dropCrossfadePrep();
-    const t = new Audio();
-    const p = { el: t, token: state.loadToken, point, end, ready: false, timer: 0 };
+    stopCrossfadeTail(0);
+    const t = mixTailEl || new Audio();
+    const p = { el: t, token: state.loadToken, point, end, ready: false, timer: 0, plan: null, catchUp: !!catchUp };
+    // The tail is the outgoing deck. Only use the Web Audio Mix chain when the graph and the reusable
+    // element are available; phones and HLS keep the old element-volume crossfade.
+    if (plan && audioEngine && audioEngine.mixReady && audioEngine.mixReady()) {
+      const deck = audioEngine.ensureTailDeck(t);
+      if (deck) p.plan = plan;
+    }
     xfade.prep = p;
     try {
       t.preload = 'auto';
       if (a.crossOrigin) t.crossOrigin = a.crossOrigin;
-      t.volume = 0;
+      t.volume = p.plan ? 1 : 0;
       t.playbackRate = a.playbackRate;
       if ('preservesPitch' in a) t.preservesPitch = a.preservesPitch;
       if (a.sinkId && typeof t.setSinkId === 'function') t.setSinkId(a.sinkId).catch(() => {});
       t.addEventListener('loadedmetadata', () => { try { t.currentTime = point; } catch (e) {} }, { once: true });
-      t.addEventListener('seeked', () => { if (xfade.prep === p) p.ready = true; }, { once: true });
+      t.addEventListener('seeked', () => {
+        if (xfade.prep !== p) return;
+        p.ready = true;
+        // A catch-up has no future prepare window: start as soon as the tail is actually at the cue.
+        if (p.catchUp) startCrossfade();
+      }, { once: true });
       t.addEventListener('error', () => { if (xfade.prep === p) dropCrossfadePrep(); }, { once: true });
       t.src = a.currentSrc;
+      try { t.load(); } catch (e) {}
     } catch (e) { dropCrossfadePrep(); return; }
+    if (p.catchUp) {
+      // Usually the tail's seeked event starts it. If the element was already at the cue (or never
+      // reports a seek), this catches that case without waiting for another timeupdate.
+      setTimeout(() => {
+        if (xfade.prep !== p || p.started) return;
+        if (p.ready) startCrossfade();
+        else if (t.readyState >= 1 && Math.abs((t.currentTime || 0) - point) < 0.05) {
+          p.ready = true;
+          startCrossfade();
+        }
+      }, 300);
+      return;
+    }
     // timeupdate comes only every quarter second or so: a timer starts the overlap on time
     const arm = () => {
       clearTimeout(p.timer);
@@ -3781,34 +3994,80 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!p.ready || p.token !== state.loadToken || a.paused || state.isRepeat || queueFinished()) { fallback(); return; }
     const t = p.el;
     const level = tailLevel();
+    const webMix = !!(p.plan && audioEngine && audioEngine.mixReady && audioEngine.mixReady());
     try { t.currentTime = Math.min(p.end, a.currentTime + 0.02); } catch (e) {}
-    t.volume = 0; // silent until the main player lets go, or the two would play the same seconds twice
+    t.volume = webMix ? 1 : 0; // silent until the main player lets go, or the two would play the same seconds twice
+    if (webMix) {
+      try { audioEngine.tailGain.gain.value = 0; } catch (e) {}
+    }
     const played = t.play();
     Promise.resolve(played).then(() => {
       if (xfade.prep !== p || p.token !== state.loadToken || a.paused) { if (xfade.prep === p) dropCrossfadePrep(); else disposeTailEl(t); return; }
       xfade.prep = null;
       stopCrossfadeTail(0);
-      t.volume = level;
-      const tail = { el: t, end: p.end, point: p.point, level, loop: 0 };
+      t.volume = webMix ? 1 : level;
+      const tail = { el: t, end: p.end, point: p.point, level, loop: 0, webAudio: webMix };
       xfade.tail = tail;
       // fade out along the song's own time, so a pause holds the fade where it is
       tail.loop = setInterval(() => {
         if (xfade.tail !== tail) { clearInterval(tail.loop); return; }
         const cur = t.currentTime || 0;
         if (t.ended || cur >= tail.end - 0.02) { stopCrossfadeTail(0); return; }
+        if (tail.webAudio) return;
         try { t.volume = tail.level * window.CanaryTrim.fadeOutGain((cur - tail.point) / (tail.end - tail.point)); } catch (e) {}
       }, 40);
       crossfadeFadeInPending = true;
       xfade.handingOver = true;
       state._isNaturalEnding = true;
-      try { playNext(); } finally { state._isNaturalEnding = false; xfade.handingOver = false; }
+      if (webMix) {
+        xfade.pendingPlan = p.plan;
+        xfade.pendingEntry = p.plan.toTrack
+          ? { trackKey: getTrackCanonicalId(p.plan.toTrack), time: p.plan.entry || 0, rate: p.plan.rate || null }
+          : null;
+      } else {
+        xfade.pendingPlan = null;
+        xfade.pendingEntry = null;
+      }
+      try {
+        playNext();
+      } finally {
+        state._isNaturalEnding = false;
+        xfade.handingOver = false;
+        if (webMix) {
+          // the main element is paused now, so the outgoing deck can take over until the next one starts
+          try { audioEngine.tailGain.gain.value = 1; } catch (e) {}
+        }
+      }
     }, () => fallback());
   }
   // the next song fades in while the tail fades out: through the engine on computers, the volume on phones
   function crossfadeFadeIn() {
+    if (xfade.pendingPlan) {
+      const plan = xfade.pendingPlan;
+      xfade.pendingPlan = null;
+      const tail = xfade.tail;
+      const tailAlive = !!(tail && tail.webAudio && !tail.el.ended && !tail.el.paused);
+      if (tailAlive) {
+        // The next song may have taken a moment to load (or this is a seek catch-up): fade over the
+        // time the tail actually has left, not the originally planned length.
+        const remaining = crossfadeTailRemaining();
+        if (remaining > 0) {
+          plan.wallDuration = Math.max(0.5, remaining);
+          plan.duration = plan.wallDuration * (tail.el.playbackRate || 1);
+        }
+      }
+      if (tailAlive && audioEngine && audioEngine.startMixTransition && audioEngine.startMixTransition(plan)) {
+        if (plan.rate > 0) applyMixRate(plan.rate, (plan.wallDuration || plan.duration) + 0.5);
+        return;
+      }
+      // the outgoing deck ran out while the next song loaded: bring the incoming one in normally
+      if (audioEngine && audioEngine.cancelMixTransition) audioEngine.cancelMixTransition();
+      if (audioEngine && audioEngine.fadeIn) audioEngine.fadeIn(0.4);
+      return;
+    }
     const X = crossfadeSeconds();
     const secs = Math.max(0.5, crossfadeTailRemaining() || X / 2);
-    if (!isPhoneApp) { if (X > 0 && audioEngine) audioEngine.fadeIn(secs); return; }
+    if (!isPhoneApp) { if (audioEngine) audioEngine.fadeIn(X > 0 ? secs : 0.5); return; }
     if (!elementVolumeWorks()) return;
     const a = el.nativeAudio;
     const started = performance.now();
@@ -3828,18 +4087,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (xfade.handingOver) {
       // the next song starts silent and fades in once it plays ('playing' -> crossfadeFadeIn)
       if (isPhoneApp && elementVolumeWorks()) { try { el.nativeAudio.volume = 0; } catch (e) {} }
-      else if (audioEngine && audioEngine.masterGain && audioEngine.ctx) {
-        try { audioEngine.masterGain.gain.cancelScheduledValues(audioEngine.ctx.currentTime); audioEngine.masterGain.gain.setValueAtTime(0.001, audioEngine.ctx.currentTime); } catch (e) {}
+      else if (audioEngine && audioEngine.ctx) {
+        try {
+          const now = audioEngine.ctx.currentTime;
+          if (xfade.pendingPlan && audioEngine.mixOut) {
+            // the incoming deck is silenced on its own transition chain; the master stays usable
+            audioEngine.mixOut.gain.cancelScheduledValues(now);
+            audioEngine.mixOut.gain.setValueAtTime(0.0001, now);
+          } else if (audioEngine.masterGain) {
+            audioEngine.masterGain.gain.cancelScheduledValues(now);
+            audioEngine.masterGain.gain.setValueAtTime(0.001, now);
+          }
+        } catch (e) {}
       }
       return;
     }
     stopCrossfadeTail(0.25);
+    xfade.pendingPlan = null;
+    xfade.pendingEntry = null;
+    xfade.entrySeek = null;
+    clearMixRate();
+    if (audioEngine && audioEngine.cancelMixTransition) audioEngine.cancelMixTransition();
     cancelAnimationFrame(xfade.fadeInRaf);
     // a song that ended after the plain fade-out still fades the next one in ('ended' set it)
     if (state._isNaturalEnding) return;
     crossfadeFadeInPending = false;
     if (isPhoneApp && elementVolumeWorks()) { try { el.nativeAudio.volume = 1; } catch (e) {} }
   }
+
+  // A seek invalidates any tail/plan armed for the old position. Re-planning happens on the next
+  // timeupdate, from the new position.
+  function resetTransitionForSeek() {
+    dropCrossfadePrep();
+    stopCrossfadeTail(0);
+    xfade.pendingPlan = null;
+    xfade.pendingEntry = null;
+    xfade.entrySeek = null;
+    crossfadeFadeInPending = false;
+    cancelAnimationFrame(xfade.fadeInRaf);
+    xfade.fadeInRaf = 0;
+    if (isPhoneApp && elementVolumeWorks()) { try { el.nativeAudio.volume = 1; } catch (e) {} }
+    clearMixRate();
+    if (audioEngine && audioEngine.cancelMixTransition) audioEngine.cancelMixTransition();
+  }
+
   let currentAlbumPlayRunId = 0;
 
   function pushPlayHistory(track) {
@@ -3879,6 +4170,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function playTrack(track, queueList = null, startIndex = -1, context = null) {
     if (!track || !el.nativeAudio) return;
+    // Mix follows the playlist the listener started. A natural Next/Previous keeps it; picking anything
+    // else (search, favorites, album, queue, radio) starts ordinary playback.
+    if (context === 'playlist') {
+      const pl = state.playlists.find((p) => p.id === state.currentPlaylistId);
+      if (pl && pl.mix && pl.mix.enabled && !state.isShuffle) {
+        mixEnsureTransitions(pl);
+        state.mixPlaylistId = mixReadiness(pl).mixReady ? pl.id : null;
+      } else {
+        state.mixPlaylistId = null;
+      }
+    } else if (!advancing && !state._isNaturalEnding) {
+      state.mixPlaylistId = null;
+    }
+    // The outgoing tail planned a beat-aligned entry for the song it is handing over to.
+    const mixEntry = xfade.pendingEntry && getTrackCanonicalId(track) === xfade.pendingEntry.trackKey
+      ? { ...xfade.pendingEntry }
+      : null;
+    if (mixEntry) xfade.pendingEntry = null;
     resetLevelWatcher();
     vizPrev = null;
     if (state.currentTrack && state.currentTrack.id !== track.id && !navigatingBack) pushPlayHistory(state.currentTrack);
@@ -3998,7 +4307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentToken !== state.loadToken) return;
         el.nativeAudio.preload = 'auto';
         el.nativeAudio.src = streamUrl;
-        playSmooth();
+        playFromMixEntry(mixEntry);
         applyAudioSettings();
         return;
       }
@@ -4022,7 +4331,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      if (!await attachStream(track, resolvedUrl, resolvedId, currentToken, signal, false)) return;
+      if (!await attachStream(track, resolvedUrl, resolvedId, currentToken, signal, false, mixEntry)) return;
       applyAudioSettings();
     } catch (err) {
       if (err.name === 'AbortError') return;
@@ -4038,7 +4347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Looks the song up (/api/stream-info) and gives its stream to the audio element. Resolves false when
   // another song was started meanwhile; throws when there is nothing to play.
-  async function attachStream(track, resolvedUrl, resolvedId, currentToken, signal, fresh) {
+  async function attachStream(track, resolvedUrl, resolvedId, currentToken, signal, fresh, mixEntry = null) {
     const streamInfoUrl = `http://127.0.0.1:${state.serverPort}/api/stream-info?url=${encodeURIComponent(resolvedUrl || '')}&id=${encodeURIComponent(resolvedId || '')}${fresh ? '&fresh=1' : ''}&platform=${track.platform || state.platform}&title=${encodeURIComponent(track.title || '')}&artist=${encodeURIComponent(track.artist || '')}&duration=${encodeURIComponent(track.duration || 0)}&thumbnail=${encodeURIComponent(track.thumbnail || '')}`;
     const res = await fetch(streamInfoUrl, { signal });
     const data = await res.json();
@@ -4093,7 +4402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const src = pickStreamSrc(data);
       proxyFallback = src !== data.streamUrl ? null : { token: currentToken, track, url: data.proxyUrl || '' };
       el.nativeAudio.src = src;
-      playSmooth();
+      playFromMixEntry(mixEntry);
     }
     return true;
   }
@@ -6402,6 +6711,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   window.pauseSmooth = pauseSmooth;
+  // The incoming song starts at the prepared entry beat. While it seeks, the outgoing tail keeps playing;
+  // if the tail is available, wait for its next beat so the two grids start together.
+  function playFromMixEntry(entry) {
+    if (!entry) { playSmooth(); return; }
+    const startAt = Number(entry.time) > 0 ? Number(entry.time) : 0;
+    const token = state.loadToken;
+    const a = el.nativeAudio;
+    if (!a) { playSmooth(); return; }
+    const target = Math.min(startAt, Number.isFinite(a.duration) && a.duration > 0 ? Math.max(0, a.duration - 0.1) : startAt);
+    let done = false;
+    const start = () => {
+      if (done || token !== state.loadToken) return;
+      done = true;
+      xfade.entrySeek = null;
+      if (xfade.tail && xfade.pendingPlan && window.CanaryMixCore) {
+        const plan = xfade.pendingPlan;
+        const grid = plan.from || plan.fromAnalysis;
+        const tail = xfade.tail.el;
+        if (grid && Number(grid.bpm) > 0 && tail && !tail.paused && !tail.ended) {
+          const period = 60 / Number(grid.bpm);
+          const offset = Number(grid.beatOffset) || 0;
+          const t = tail.currentTime || 0;
+          const n = Math.ceil((t - offset) / period - 1e-6);
+          const nextBeat = offset + Math.max(0, n) * period;
+          const delay = Math.min(650, Math.max(0, ((nextBeat - t) / (tail.playbackRate || 1)) * 1000));
+          if (delay > 10) {
+            setTimeout(() => { if (token === state.loadToken) playSmooth(); }, delay);
+            return;
+          }
+        }
+      }
+      playSmooth();
+    };
+    const seekAndPlay = () => {
+      if (done || token !== state.loadToken) return;
+      if (!(startAt > 0)) { start(); return; }
+      // The incoming entry seek is ours, not a listener scrub: do not let the seeked handler tear
+      // down the transition that is currently handing over to this song.
+      xfade.entrySeek = { token, at: Date.now() };
+      try { a.currentTime = target; } catch (e) { xfade.entrySeek = null; start(); return; }
+      a.addEventListener('seeked', start, { once: true });
+      // some sources never report a seek (or it happens before the listener): don't stall the hand-off
+      setTimeout(start, 1200);
+    };
+    if (a.readyState >= 1) seekAndPlay();
+    else a.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+  }
+
   window.playSmooth = playSmooth;
 
   let queueEndedToken = -1; // the song the queue ended on with repeat off, see the 'ended' handler
@@ -6641,7 +6998,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const nextTrack = state.isShuffle ? planShuffleNext() : (state.queue && state.queue.slice(state.queueIndex + 1).find((t) => !isBlocked(t)));
       if (!nextTrack || nextTrack.platform === 'local' || !(nextTrack.url || nextTrack.id)) return;
       const q = `url=${encodeURIComponent(nextTrack.url || '')}&id=${encodeURIComponent(nextTrack.id || '')}&platform=${nextTrack.platform || state.platform}&title=${encodeURIComponent(nextTrack.title || '')}&artist=${encodeURIComponent(nextTrack.artist || '')}&duration=${encodeURIComponent(nextTrack.duration || 0)}&thumbnail=${encodeURIComponent(nextTrack.thumbnail || '')}`;
-      fetch(`http://127.0.0.1:${state.serverPort}/api/${isPhoneApp ? 'stream-info' : 'prefetch'}?${q}&next=1`).catch(() => {});
+      // A Mix playlist needs the actual file before the hand-over, not just a resolved URL. Respect an
+      // explicit "don't cache" choice for the playlist.
+      const mixPl = state.mixPlaylistId && state.playlists.find((p) => p.id === state.mixPlaylistId);
+      const mixCache = !isPhoneApp && !state.isShuffle && !!mixPl && mixPl.mix && mixPl.mix.cacheAudio !== false;
+      const endpoint = mixCache ? 'cache-track' : (isPhoneApp ? 'stream-info' : 'prefetch');
+      fetch(`http://127.0.0.1:${state.serverPort}/api/${endpoint}?${q}${mixCache ? '' : '&next=1'}`).catch(() => {});
     }
 
     el.nativeAudio.addEventListener('playing', () => {
@@ -6761,6 +7123,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // has loaded, which undid the settings applied when it started loading (issue #5)
     const keepPlaybackRate = () => {
       if (!audioEngine || !audioEngine.playbackFor) return;
+      // Mix tempo-matches the incoming deck for the overlap; don't undo it while the transition runs.
+      if (state.mixRateOverride) return;
       const { rate, preservePitch } = audioEngine.playbackFor();
       const a = el.nativeAudio;
       if (Math.abs(a.playbackRate - rate) > 0.001 || a.preservesPitch !== preservePitch) audioEngine.applySettings(a);
@@ -6802,7 +7166,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     el.nativeAudio.addEventListener('seeked', () => {
+      const entrySeek = !!(xfade.entrySeek
+        && xfade.entrySeek.token === state.loadToken
+        && Date.now() - xfade.entrySeek.at < 5000);
+      xfade.entrySeek = null;
       cancelEndFade(); // timeupdate fades again from here if the seek stayed inside the last seconds
+      if (!entrySeek) resetTransitionForSeek();
       updateMediaPositionState();
       updateDiscordPresence();
       state.forceLyricsScroll = true;
@@ -6828,19 +7197,54 @@ document.addEventListener('DOMContentLoaded', async () => {
       // the end, which cut every song short by the crossfade length (#22).
       // With overlap (#29) the last X seconds move to a second player that plays them to the end while the next
       // song starts (prepareCrossfade); the song itself is never cut short.
-      const X = crossfadeSeconds();
-      if (X > 0 && !crossfadeTriggered && !state.isRepeat && !el.nativeAudio.paused && audioEngine && !audioEngine.isLiveStream(el.nativeAudio) && window.CanaryTrim) {
+      if (!crossfadeTriggered && !state.isRepeat && !el.nativeAudio.paused && audioEngine && !audioEngine.isLiveStream(el.nativeAudio) && window.CanaryTrim) {
         const trim = state.currentTrack ? getTrackTrim(state.currentTrack) : null;
         const end = window.CanaryTrim.isActive(trim) ? Math.min(trim.end, dur) : dur;
         const sleepAtEnd = state.sleepTimer && state.sleepTimer.mode === 'end';
-        const step = !sleepAtEnd && canOverlap(el.nativeAudio) && !queueFinished() ? window.CanaryTrim.crossfadeStep(cur, end, X, el.nativeAudio.playbackRate) : null;
-        if (step && !xfade.prep) {
-          prepareCrossfade(window.CanaryTrim.crossfadePoint(end, X), end);
-        } else if (!step && !xfade.prep) {
-          const fade = window.CanaryTrim.endFadeSeconds(cur, end, X, el.nativeAudio.playbackRate);
-          if (fade > 0) {
-            crossfadeTriggered = true;
-            audioEngine.fadeOut(fade);
+        // A prepared Mix plan replaces the global Crossfade setting for this hand-off. Build it only near
+        // the end (or reuse the plan already prepared), so ordinary playback does not parse analyses 4x/s.
+        let mixPlan = xfade.prep && xfade.prep.plan ? xfade.prep.plan : null;
+        if (!sleepAtEnd && !mixPlan && end - cur <= 45 && !queueFinished() && canOverlap(el.nativeAudio)) {
+          mixPlan = currentMixPlan(end);
+        }
+        const X = mixPlan ? mixPlan.duration : crossfadeSeconds();
+        if (X > 0) {
+          let step = null;
+          if (!sleepAtEnd && canOverlap(el.nativeAudio) && !queueFinished()) {
+            if (mixPlan) {
+              // Mix may use a long overlap or a manual exit; the plain Crossfade's "fade < half the
+              // song" guard would reject those and silently skip the transition.
+              const lead = 4 * (el.nativeAudio.playbackRate || 1);
+              if (mixPlan.point < end) {
+                step = cur >= mixPlan.point ? 'start' : (cur >= mixPlan.point - lead ? 'prepare' : null);
+              }
+            } else {
+              step = window.CanaryTrim.crossfadeStep(cur, end, X, el.nativeAudio.playbackRate);
+            }
+          }
+          if (step === 'prepare' && !xfade.prep) {
+            prepareCrossfade(mixPlan ? mixPlan.point : window.CanaryTrim.crossfadePoint(end, X), end, mixPlan);
+          } else if (step === 'start' && !xfade.prep) {
+            // The seek/scrub landed after the normal prepare window. Catch up from here; the tail
+            // starts as soon as it is ready, and the fade is shortened to the time that is left.
+            if (mixPlan) {
+              prepareCrossfade(cur, end, mixPlan, true);
+            } else {
+              const fade = window.CanaryTrim.endFadeSeconds(cur, end, crossfadeSeconds(), el.nativeAudio.playbackRate);
+              if (fade > 0) {
+                crossfadeTriggered = true;
+                audioEngine.fadeOut(fade);
+              }
+            }
+          } else if (step === 'start' && xfade.prep && xfade.prep.plan) {
+            // A catch-up waits for its tail's seeked event; starting before that would fall back early.
+            if (!xfade.prep.catchUp || xfade.prep.ready) startCrossfade();
+          } else if (!step && !xfade.prep) {
+            const fade = window.CanaryTrim.endFadeSeconds(cur, end, X, el.nativeAudio.playbackRate);
+            if (fade > 0) {
+              crossfadeTriggered = true;
+              audioEngine.fadeOut(fade);
+            }
           }
         }
       }
@@ -8250,12 +8654,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       const row = document.createElement('div');
       row.className = 'track-row';
       row.tabIndex = 0;
+      row._mixTrack = track;
       const canonicalId = getTrackCanonicalId(track);
       row.dataset.canonicalId = canonicalId;
       row.dataset.trackIndex = String(idx);
       row.dataset.trackId = track.id || '';
       row.dataset.trackTitle = track.title || '';
       row.dataset.trackArtist = track.artist || '';
+      row.dataset.mixNextKey = context === 'playlist' && tracks && tracks[idx + 1] ? getTrackCanonicalId(tracks[idx + 1]) : '';
 
       row.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -8281,6 +8687,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       const isFav = state.favorites.some(f => isSameSong(f, track));
+      // Each row carries the strip for the transition to the row after it. It is only meaningful in
+      // manual playlist order; search/sort hide it rather than attaching it to the wrong pair.
+      const mixStripOn = context === 'playlist' && mixStripsEnabled();
+      const mixNextTrack = mixStripOn && tracks ? (tracks[idx + 1] || null) : null;
+      row._mixNextTrack = mixNextTrack;
       const rowThumb = getTrackThumbUrl(track);
       const isAlbum = context === 'album';
       const albumArtist = (track.albumArtist || '').trim().toLowerCase();
@@ -8299,8 +8710,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       <span class="track-downloaded-badge track-row-downloaded hidden" title="Downloaded" aria-label="Downloaded">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 8.5 6.5 12 13 4.5"></polyline></svg>
       </span>
+      ${context === 'playlist' ? '<span class="mix-track-meta" data-mix-meta></span>' : ''}
       </div>
       ${explicitTag ? `<span class="track-row-artist-wrap">${explicitTag}${artistSpan}</span>` : artistSpan}
+      ${mixStripOn ? `<div class="mix-edge-strip${mixNextTrack ? '' : ' empty'}" data-mix-edge-strip role="button" tabindex="${mixNextTrack ? '0' : '-1'}" title="${mixNextTrack ? escapeHtml(T('Edit transition')) : ''}"><span class="mix-edge-arrow">↳</span><span class="mix-edge-text" data-mix-edge-text></span></div>` : ''}
       </div>
       <span class="track-row-duration">${formatDuration(track.duration)}</span>
       <div class="track-row-actions">
@@ -8328,6 +8741,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         refreshTrackDownloadedBadge(row.querySelector('.track-row-downloaded'), track);
+
+        const edgeStrip = row.querySelector('[data-mix-edge-strip]');
+        if (edgeStrip && mixNextTrack) {
+          const editEdge = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openMixTransitionEditor(track, mixNextTrack);
+          };
+          edgeStrip.addEventListener('click', editEdge);
+          edgeStrip.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') editEdge(e);
+          });
+        }
 
         if (multiSel.active && multiSel.context === context) {
           const chk = document.createElement('span');
@@ -8636,6 +9062,951 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('resize', closeTrackContextMenu);
   document.addEventListener('scroll', closeTrackContextMenu, true);
 
+  // ---- Canary Mix: strict playlist preparation ----
+  // The analyzer lives on the local server (mix-analysis.js). This half owns the visible preparation
+  // job, the readiness gate and the per-row BPM/key badges. A playlist is ready only when every unique
+  // song is either analyzed or has a terminal fallback; nothing is ever analyzed during playback here.
+  function mixStoreKey(track) {
+    return window.CanaryMixPrep ? window.CanaryMixPrep.analysisKey(track) : '';
+  }
+
+  function mixGetAnalysis(track) {
+    const key = mixStoreKey(track);
+    if (!key) return null;
+    if (mixAnalysisMemo.has(key)) return mixAnalysisMemo.get(key);
+    try {
+      const raw = localStorage.getItem(`canary_audio_analysis_${key}`);
+      if (!raw) {
+        // remember the miss too: readiness asks about every track after each analysis
+        mixAnalysisMemo.set(key, null);
+        capMap(mixAnalysisMemo, 1200);
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      const valid = parsed && Number(parsed.v) === MIX_VERSION ? parsed : null;
+      mixAnalysisMemo.set(key, valid);
+      capMap(mixAnalysisMemo, 1200);
+      return valid;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function mixSetAnalysis(track, analysis) {
+    const key = mixStoreKey(track);
+    if (!key || !analysis) return;
+    // Beats are a constant-tempo grid from bpm + beatOffset; storing hundreds of timestamps per song
+    // would fill the 5 MB localStorage budget after a few playlists.
+    const compact = { ...analysis };
+    delete compact.beats;
+    mixAnalysisMemo.set(key, compact);
+    capMap(mixAnalysisMemo, 1200);
+    try { localStorage.setItem(`canary_audio_analysis_${key}`, JSON.stringify(compact)); } catch (e) {}
+    try { analysisCache.set(key, compact); capMap(analysisCache, 300); } catch (e) {}
+  }
+
+  function mixCurrentPlaylist() {
+    return state.playlists.find((p) => p.id === state.currentPlaylistId) || null;
+  }
+
+  function mixEnsureState(pl) {
+    if (!pl) return null;
+    if (!pl.mix || typeof pl.mix !== 'object' || Array.isArray(pl.mix)) {
+      pl.mix = { enabled: false, analysisVersion: MIX_VERSION, preparedFingerprint: '', preparedAt: 0, transitions: {} };
+    }
+    if (!pl.mix.transitions || typeof pl.mix.transitions !== 'object' || Array.isArray(pl.mix.transitions)) {
+      pl.mix.transitions = {};
+    }
+    return pl.mix;
+  }
+
+  function mixEnsureTransitions(pl, persist = true) {
+    if (!pl || !pl.mix || !window.CanaryMixTransitions) return false;
+    const changed = window.CanaryMixTransitions.migrate(pl);
+    if (changed && persist) mixPersist(pl, false);
+    return changed;
+  }
+
+  function mixStripsEnabled() {
+    if (isPhoneApp) return false;
+    const pl = mixCurrentPlaylist();
+    if (!pl || !pl.mix) return false;
+    if (el.playlistSearchInput && el.playlistSearchInput.value.trim()) return false;
+    if (getTrackSortMode('playlist') !== 'manual') return false;
+    return !!(pl.mix.enabled || pl.mix.preparedAt)
+      || (mixPrep.panelPlaylistId === pl.id)
+      || (mixPrep.running && mixPrep.playlistId === pl.id)
+      || (mixPrep.paused && mixPrep.playlistId === pl.id);
+  }
+
+  function mixReadiness(pl) {
+    if (!pl || !window.CanaryMixPrep) {
+      return { total: 0, ready: 0, fallback: 0, unprocessed: 0, done: 0, progress: 1, mixReady: true, needsPreparation: false, rows: [] };
+    }
+    return window.CanaryMixPrep.readiness(pl.tracks || [], mixGetAnalysis, MIX_VERSION);
+  }
+
+  function mixFingerprint(pl) {
+    return window.CanaryMixPrep ? window.CanaryMixPrep.fingerprint((pl && pl.tracks) || [], MIX_VERSION) : '';
+  }
+
+  function mixPersist(pl, render = true) {
+    try { localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists)); } catch (e) {}
+    if (pl && render) renderPlaylistsList();
+  }
+
+  function mixSetText(node, text) {
+    if (node) node.textContent = text == null ? '' : String(text);
+  }
+
+  function updateMixRowStatuses(pl) {
+    pl = pl || mixCurrentPlaylist();
+    const list = document.getElementById('playlist-tracks-list');
+    if (!pl || !list || !window.CanaryMixPrep) return;
+    const show = !!(pl.mix && (pl.mix.enabled || pl.mix.preparedAt))
+      || (mixPrep.panelPlaylistId === pl.id)
+      || (mixPrep.running && mixPrep.playlistId === pl.id)
+      || (mixPrep.paused && mixPrep.playlistId === pl.id);
+    const strips = mixStripsEnabled();
+    const byCanonical = new Map();
+    for (const track of pl.tracks || []) byCanonical.set(getTrackCanonicalId(track), track);
+    list.querySelectorAll(':scope > .track-row').forEach((row) => {
+      const track = row._mixTrack || byCanonical.get(row.dataset.canonicalId) || null;
+      const meta = row.querySelector('[data-mix-meta]');
+      if (meta) {
+        row.classList.toggle('mix-show-badges', show);
+        if (show) {
+          const key = track ? window.CanaryMixPrep.analysisKey(track) : '';
+          const live = key ? mixPrep.statuses.get(key) : '';
+          const status = live === 'analyzing' || live === 'queued' || live === 'caching'
+            ? live
+            : (track ? window.CanaryMixPrep.statusOf(track, mixGetAnalysis, MIX_VERSION) : 'unprocessed');
+          meta.className = `mix-track-meta ${status === 'caching' ? 'analyzing' : status}`;
+          meta.removeAttribute('title');
+          if (status === 'ready') {
+            const entry = mixGetAnalysis(track);
+            const quality = window.CanaryMixPrep.qualityOf(entry);
+            const bpm = entry && Number(entry.bpm) > 0 ? `${Math.round(entry.bpm)} BPM` : '';
+            const camelot = entry && entry.camelot ? entry.camelot : '';
+            mixSetText(meta, [bpm, camelot].filter(Boolean).join(' · ') || T('Ready'));
+            if (quality === 'basic') meta.classList.add('basic');
+            if (entry && entry.key) meta.title = `${entry.key}${entry.camelot ? ` · Camelot ${entry.camelot}` : ''}`;
+          } else if (status === 'fallback') {
+            const entry = mixGetAnalysis(track);
+            mixSetText(meta, T('Standard fade'));
+            meta.title = entry ? window.CanaryMixPrep.fallbackLabel(entry.reason) : T('Not available for beat mixing');
+          } else if (status === 'caching') {
+            mixSetText(meta, T('Caching…'));
+          } else if (status === 'analyzing') {
+            mixSetText(meta, T('Analyzing…'));
+          } else if (status === 'queued') {
+            mixSetText(meta, T('Queued'));
+          } else {
+            mixSetText(meta, T('Not analyzed'));
+          }
+        }
+      }
+      const strip = row.querySelector('[data-mix-edge-strip]');
+      if (strip) {
+        const next = row._mixNextTrack || null;
+        const visible = strips && !!next && !!track;
+        strip.classList.toggle('empty', !visible);
+        if (visible && window.CanaryMixTransitions) {
+          const config = window.CanaryMixTransitions.transitionFor(pl, track, next)
+            || window.CanaryMixTransitions.makeDefault();
+          mixSetText(strip.querySelector('[data-mix-edge-text]'), Tm('to {0} · {1}', next.title || T('next song'), window.CanaryMixTransitions.describe(config)));
+          strip.classList.toggle('mix-off', config.enabled === false);
+        }
+      }
+    });
+  }
+
+  function updateMixCachePanel(pl, readiness) {
+    const unique = window.CanaryMixPrep ? window.CanaryMixPrep.uniqueTracks(pl.tracks || []) : [];
+    const seconds = unique.reduce((sum, track) => sum + (Number(track.duration) || 0), 0);
+    const estimated = Math.max(0, Math.round(seconds * 16000)); // ~128 kbps Opus
+    if (el.mixCacheAudio) {
+      el.mixCacheAudio.checked = mixPrep.cacheEnabled !== false;
+      el.mixCacheAudio.disabled = mixPrep.running;
+    }
+    if (el.mixCacheHint) {
+      mixSetText(el.mixCacheHint, mixPrep.cacheEnabled
+        ? (pl.mix.cachePreparedAt
+          ? T('Audio is cached on this device for instant transitions.')
+          : Tm('About {0} for {1} songs. Songs already cached are skipped.', formatBytes(estimated), unique.length))
+        : T('Transitions may wait for the next song to load.'));
+    }
+    if (el.mixCacheProgress) {
+      const show = mixPrep.cacheEnabled && mixPrep.cacheTotal > 0;
+      el.mixCacheProgress.classList.toggle('hidden', !show);
+      if (show) {
+        const pct = Math.round((mixPrep.cacheDone / Math.max(1, mixPrep.cacheTotal)) * 100);
+        if (el.mixCacheBar) el.mixCacheBar.style.width = `${pct}%`;
+        mixSetText(el.mixCacheCount, `${mixPrep.cacheDone} / ${mixPrep.cacheTotal}`);
+      }
+    }
+    if (el.mixPrepCache) {
+      const canCache = readiness.mixReady && mixPrep.cacheEnabled && !mixPrep.running && !pl.mix.cachePreparedAt;
+      el.mixPrepCache.hidden = !canCache;
+      el.mixPrepCache.disabled = mixPrep.running;
+      mixSetText(el.mixPrepCache, pl.mix.cachePreparedAt ? T('Audio cached') : T('Cache songs'));
+    }
+  }
+
+  function populateMixPanel(pl, readiness) {
+    const running = mixPrep.running && mixPrep.playlistId === pl.id;
+    const paused = mixPrep.paused && mixPrep.playlistId === pl.id;
+    const fallbacks = readiness.fallback || 0;
+    const pct = Math.round((readiness.progress || 0) * 100);
+    mixSetText(el.mixPrepCount, `${readiness.done} / ${readiness.total}`);
+    if (el.mixPrepBar) el.mixPrepBar.style.width = `${pct}%`;
+    if (el.mixPrepProgress) {
+      el.mixPrepProgress.setAttribute('aria-valuenow', String(pct));
+      el.mixPrepProgress.setAttribute('aria-valuetext', `${readiness.done} of ${readiness.total}`);
+    }
+    mixSetText(el.mixPrepCurrent, running
+      ? (mixPrep.currentTitle
+        ? (mixPrep.currentPhase === 'cache' ? Tm('Caching “{0}”', mixPrep.currentTitle) : Tm('Analyzing “{0}”', mixPrep.currentTitle))
+        : (mixPrep.currentPhase === 'cache' ? T('Preparing the audio cache…') : T('Waiting for the analyzer…')))
+      : '');
+
+    if (running) {
+      mixSetText(el.mixPrepTitle, mixPrep.cacheOnly ? T('Caching this playlist for Mix') : T('Preparing this playlist for Mix'));
+      mixSetText(el.mixPrepSubtitle, mixPrep.cacheOnly
+        ? T('Saving songs to the local cache for instant transitions.')
+        : T('Analyzing tempo, key and beat grid. This may take a few minutes; results are saved on this device.'));
+    } else if (mixPrep.lastError) {
+      mixSetText(el.mixPrepTitle, T("Couldn't prepare Mix"));
+      mixSetText(el.mixPrepSubtitle, mixPrep.lastError);
+    } else if (paused) {
+      mixSetText(el.mixPrepTitle, T('Preparation paused'));
+      mixSetText(el.mixPrepSubtitle, Tm('{0} of {1} songs are prepared. Resume whenever you are ready.', readiness.done, readiness.total));
+    } else if (readiness.needsPreparation) {
+      mixSetText(el.mixPrepTitle, T('Prepare this playlist for Mix'));
+      mixSetText(el.mixPrepSubtitle, Tm('{0} of {1} songs still need analysis. This only happens once per device.', readiness.unprocessed, readiness.total));
+    } else if (fallbacks > 0) {
+      mixSetText(el.mixPrepTitle, T('Mix is ready'));
+      mixSetText(el.mixPrepSubtitle, Tm('{0} songs analyzed. {1} will use a standard fade.', readiness.ready, fallbacks));
+    } else {
+      mixSetText(el.mixPrepTitle, T('Mix is ready'));
+      mixSetText(el.mixPrepSubtitle, Tm('All {0} songs are analyzed on this device.', readiness.total));
+    }
+
+    if (el.mixPrepStart) {
+      const mixOn = !!(pl.mix && pl.mix.enabled);
+      const showStart = !running && (paused || readiness.needsPreparation || (readiness.mixReady && fallbacks > 0 && !mixOn));
+      el.mixPrepStart.hidden = !showStart;
+      if (paused) mixSetText(el.mixPrepStart, T('Resume preparation'));
+      else if (readiness.needsPreparation) mixSetText(el.mixPrepStart, readiness.unprocessed === 1 ? T('Prepare 1 song') : Tm('Prepare {0} songs', readiness.unprocessed));
+      else if (readiness.mixReady && fallbacks > 0) mixSetText(el.mixPrepStart, T('Turn on Mix'));
+      else mixSetText(el.mixPrepStart, T('Prepare playlist'));
+      el.mixPrepStart.disabled = !showStart;
+    }
+    if (el.mixPrepRetry) {
+      el.mixPrepRetry.hidden = running || paused || readiness.needsPreparation || fallbacks === 0;
+      el.mixPrepRetry.disabled = running;
+    }
+    if (el.mixPrepCancel) {
+      el.mixPrepCancel.hidden = !running;
+    }
+    if (el.mixPrepClose) {
+      el.mixPrepClose.hidden = running;
+    }
+    updateMixCachePanel(pl, readiness);
+  }
+
+  function updateMixPlaylistUI(pl) {
+    // Phones have no Web Audio graph (mobile-ui.js) and no analyzer endpoint; Mix is desktop-only.
+    if (isPhoneApp) {
+      if (el.btnMixPlaylist) el.btnMixPlaylist.classList.add('hidden');
+      if (el.btnMixSettings) el.btnMixSettings.classList.add('hidden');
+      if (el.mixPrepPanel) el.mixPrepPanel.classList.add('hidden');
+      return;
+    }
+    pl = pl || mixCurrentPlaylist();
+    if (!pl) return;
+    const mix = mixEnsureState(pl);
+    if (!mix) return;
+    if (mix.enabled || mix.preparedAt || mixPrep.panelPlaylistId === pl.id || mixPrep.running) {
+      mixEnsureTransitions(pl);
+    }
+    const readiness = mixReadiness(pl);
+    if (mixPrep.paused && mixPrep.playlistId === pl.id && readiness.mixReady) mixPrep.paused = false;
+    // strict gating also applies when a song was added while this page was closed
+    if (mix.enabled && !readiness.mixReady) {
+      mix.enabled = false;
+      if (state.mixPlaylistId === pl.id) {
+        state.mixPlaylistId = null;
+        resetMixPlayback();
+      }
+      mixPersist(pl);
+    }
+    const preparing = mixPrep.running && mixPrep.playlistId === pl.id;
+    const paused = mixPrep.paused && mixPrep.playlistId === pl.id;
+    const hasTracks = (pl.tracks || []).length > 0;
+    if (el.btnMixPlaylist) {
+      el.btnMixPlaylist.classList.toggle('active', !!mix.enabled && readiness.mixReady);
+      el.btnMixPlaylist.classList.toggle('preparing', preparing);
+      el.btnMixPlaylist.disabled = preparing || !hasTracks;
+      el.btnMixPlaylist.setAttribute('aria-pressed', mix.enabled && readiness.mixReady ? 'true' : 'false');
+      let mixTitle;
+      if (preparing) mixTitle = T('Preparing this playlist for Mix');
+      else if (paused) mixTitle = T('Resume preparing this playlist for Mix');
+      else if (mix.enabled && readiness.mixReady) {
+        mixTitle = state.isShuffle
+          ? T('Mix transitions are paused while Shuffle is on')
+          : T('Turn Mix off');
+      } else if (readiness.mixReady) mixTitle = T('Turn Mix on');
+      else mixTitle = T('Prepare this playlist for Mix');
+      el.btnMixPlaylist.title = mixTitle;
+    }
+    if (el.btnMixSettings) {
+      el.btnMixSettings.classList.toggle('hidden', !(readiness.mixReady || preparing || paused));
+      el.btnMixSettings.disabled = preparing;
+    }
+    if (el.btnMixPlaylistLabel) {
+      mixSetText(el.btnMixPlaylistLabel,
+        preparing ? Tm('Preparing {0}/{1}', readiness.done, readiness.total)
+        : paused ? T('Resume Mix')
+        : mix.enabled && readiness.mixReady ? T('Mix on')
+        : readiness.needsPreparation ? T('Prepare Mix')
+        : T('Mix'));
+    }
+    const showPanel = mixPrep.panelPlaylistId === pl.id;
+    if (el.mixPrepPanel) el.mixPrepPanel.classList.toggle('hidden', !showPanel);
+    if (showPanel) populateMixPanel(pl, readiness);
+    updateMixRowStatuses(pl);
+  }
+
+  function pauseMixPreparation() {
+    if (!mixPrep.running && !mixPrep.abort) return;
+    mixPrep.jobToken++;
+    mixPrep.cancelled = true;
+    mixPrep.paused = true;
+    mixPrep.running = false;
+    mixPrep.currentTitle = '';
+    mixPrep.currentPhase = 'analysis';
+    mixPrep.cacheOnly = false;
+    mixPrep.statuses.clear();
+    const abort = mixPrep.abort;
+    mixPrep.abort = null;
+    try { if (abort) abort.abort(); } catch (e) {}
+    const pl = state.playlists.find((p) => p.id === mixPrep.playlistId);
+    if (pl) updateMixPlaylistUI(pl);
+  }
+
+  async function cacheMixTrack(track, { signal } = {}) {
+    const params = new URLSearchParams({
+      id: track.id || '',
+      url: track.url || '',
+      platform: track.platform || state.platform || 'youtube',
+      title: track.title || '',
+      artist: track.artist || '',
+      duration: String(track.duration || 0),
+      thumbnail: track.thumbnail || ''
+    });
+    const response = await fetch(`http://127.0.0.1:${state.serverPort}/api/cache-track?${params.toString()}`, { signal });
+    let data = null;
+    try { data = await response.json(); } catch (e) {}
+    if (!data || !data.success) {
+      const error = new Error((data && data.error) || T('Could not cache this song'));
+      error.code = (data && data.code) || 'cache';
+      throw error;
+    }
+    return data;
+  }
+
+  async function analyzeMixTrack(track, { retry = false, signal } = {}) {
+    const params = new URLSearchParams({
+      id: track.id || '',
+      url: track.url || '',
+      platform: track.platform || state.platform || 'youtube',
+      title: track.title || '',
+      artist: track.artist || '',
+      duration: String(track.duration || 0)
+    });
+    if (retry) params.set('retry', '1');
+    const response = await fetch(`http://127.0.0.1:${state.serverPort}/api/analyze-track?${params.toString()}`, { signal });
+    let data = null;
+    try { data = await response.json(); } catch (e) {}
+    if (!data || !data.success || !data.analysis) {
+      const error = new Error((data && data.error) || T('The analyzer did not return a result'));
+      error.code = (data && data.code) || 'analysis';
+      throw error;
+    }
+    return data.analysis;
+  }
+
+  async function runMixPreparation(pl, { retry = false, onlyFallback = false, cacheOnly = false } = {}) {
+    if (!pl || !window.CanaryMixPrep || mixPrep.running) return;
+    mixEnsureState(pl);
+    mixEnsureTransitions(pl);
+    const token = ++mixPrep.jobToken;
+    mixPrep.playlistId = pl.id;
+    mixPrep.panelPlaylistId = pl.id;
+    mixPrep.running = true;
+    mixPrep.paused = false;
+    mixPrep.cancelled = false;
+    mixPrep.lastError = '';
+    mixPrep.currentTitle = '';
+    mixPrep.currentPhase = 'analysis';
+    mixPrep.statuses.clear();
+    mixPrep.cacheOnly = !!cacheOnly;
+    mixPrep.cacheEnabled = cacheOnly ? true : (pl.mix.cacheAudio !== false);
+    mixPrep.cacheTotal = 0;
+    mixPrep.cacheDone = 0;
+    mixPrep.cacheFailed = 0;
+    mixPrep.cacheStatuses.clear();
+    mixPrep.abort = typeof AbortController === 'function' ? new AbortController() : null;
+    const signal = mixPrep.abort ? mixPrep.abort.signal : undefined;
+
+    let queue = [];
+    if (!cacheOnly) {
+      if (onlyFallback) {
+        const seen = new Set();
+        for (const track of pl.tracks || []) {
+          const key = window.CanaryMixPrep.trackKey(track);
+          if (!key || seen.has(key)) continue;
+          if (window.CanaryMixPrep.statusOf(track, mixGetAnalysis, MIX_VERSION) !== 'fallback') continue;
+          seen.add(key);
+          queue.push(track);
+        }
+      } else {
+        queue = window.CanaryMixPrep.buildQueue(pl.tracks || [], mixGetAnalysis, MIX_VERSION);
+      }
+    }
+    const unique = window.CanaryMixPrep.uniqueTracks(pl.tracks || []);
+    const cacheQueue = cacheOnly ? unique : (mixPrep.cacheEnabled ? queue : []);
+    mixPrep.cacheTotal = cacheQueue.length;
+    for (const track of queue) {
+      const key = window.CanaryMixPrep.analysisKey(track);
+      if (key) mixPrep.statuses.set(key, 'queued');
+    }
+    updateMixPlaylistUI(pl);
+
+    // Cache phase: local audio means the hand-over never waits for a network fetch.
+    for (const track of cacheQueue) {
+      if (token !== mixPrep.jobToken || mixPrep.cancelled) return;
+      const key = window.CanaryMixPrep.analysisKey(track);
+      mixPrep.currentPhase = 'cache';
+      mixPrep.currentTitle = track.title || 'Untitled';
+      if (key && !cacheOnly) mixPrep.statuses.set(key, 'caching');
+      updateMixPlaylistUI(pl);
+      try {
+        await cacheMixTrack(track, { signal });
+      } catch (err) {
+        if (token !== mixPrep.jobToken || mixPrep.cancelled || (err && err.name === 'AbortError')) return;
+        mixPrep.cacheFailed++;
+      }
+      mixPrep.cacheDone++;
+      if (!cacheOnly && key) mixPrep.statuses.set(key, 'queued');
+      updateMixPlaylistUI(pl);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    if (cacheOnly) {
+      if (token !== mixPrep.jobToken) return;
+      mixPrep.running = false;
+      mixPrep.currentTitle = '';
+      mixPrep.abort = null;
+      pl.mix.cachePreparedAt = mixPrep.cacheFailed === 0 ? Date.now() : 0;
+      mixPersist(pl, false);
+      updateMixPlaylistUI(pl);
+      showToast(mixPrep.cacheFailed > 0
+        ? Tm('Audio cache: {0} songs could not be cached.', mixPrep.cacheFailed)
+        : Tm('Audio cache ready. {0} songs are local.', mixPrep.cacheDone), mixPrep.cacheFailed > 0 ? 'info' : 'success');
+      mixPrep.cacheOnly = false;
+      return;
+    }
+
+    for (const track of queue) {
+      if (token !== mixPrep.jobToken || mixPrep.cancelled) return;
+      const key = window.CanaryMixPrep.analysisKey(track);
+      if (key) mixPrep.statuses.set(key, 'analyzing');
+      mixPrep.currentPhase = 'analysis';
+      mixPrep.currentTitle = track.title || 'Untitled';
+      updateMixPlaylistUI(pl);
+      try {
+        const analysis = await analyzeMixTrack(track, { retry, signal });
+        if (token !== mixPrep.jobToken || mixPrep.cancelled) return;
+        mixSetAnalysis(track, analysis);
+        if (key) mixPrep.statuses.set(key, analysis.fallback ? 'fallback' : 'ready');
+      } catch (err) {
+        if (token !== mixPrep.jobToken || mixPrep.cancelled || (err && err.name === 'AbortError')) return;
+        if (err && err.code === 'no-ffmpeg') {
+          mixPrep.lastError = err.message || T('Mix analysis needs ffmpeg. Install it in Settings → Tools and try again.');
+          break;
+        }
+        if (!navigator.onLine) {
+          mixPrep.lastError = T('Connect to the internet to analyze this playlist, or download the songs first.');
+          break;
+        }
+        const fallback = window.CanaryMixPrep.fallbackEntry((err && err.code) || 'unavailable', track.duration, MIX_VERSION);
+        mixSetAnalysis(track, fallback);
+        if (key) mixPrep.statuses.set(key, 'fallback');
+      }
+      updateMixPlaylistUI(pl);
+      // let the browser paint the current-song line and the progress bar between analyses
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    if (token !== mixPrep.jobToken) return;
+    mixPrep.running = false;
+    mixPrep.currentTitle = '';
+    mixPrep.abort = null;
+    const readiness = mixReadiness(pl);
+    if (mixPrep.lastError) {
+      updateMixPlaylistUI(pl);
+      showToast(mixPrep.lastError, 'error');
+      return;
+    }
+    if (readiness.mixReady) {
+      const mix = mixEnsureState(pl);
+      mix.enabled = true;
+      mix.analysisVersion = MIX_VERSION;
+      mix.preparedFingerprint = mixFingerprint(pl);
+      mix.preparedAt = Date.now();
+      if (mixPrep.cacheEnabled) mix.cachePreparedAt = mixPrep.cacheFailed === 0 ? Date.now() : 0;
+      mixEnsureTransitions(pl);
+      mixPersist(pl);
+      cancelEndFade();
+      dropCrossfadePrep();
+      resetMixPlayback();
+      const playingThisPlaylist = state.currentTrack && (pl.tracks || []).some((t) => isSameTrack(t, state.currentTrack));
+      if (state.currentPlaylistId === pl.id && playingThisPlaylist) state.mixPlaylistId = pl.id;
+      // keep the summary (with "Retry failed") visible when some songs fell back
+      mixPrep.panelPlaylistId = readiness.fallback > 0 ? pl.id : null;
+      updateMixPlaylistUI(pl);
+      refreshMixPlaylistRows(pl);
+      let message = readiness.fallback > 0
+        ? Tm('Mix is ready. {0} songs will use a standard fade.', readiness.fallback)
+        : Tm('Mix is ready. {0} songs analyzed.', readiness.ready);
+      if (mixPrep.cacheEnabled && mixPrep.cacheFailed > 0) {
+        message += ` ${Tm('{0} songs could not be cached.', mixPrep.cacheFailed)}`;
+      }
+      showToast(message, mixPrep.cacheFailed > 0 ? 'info' : 'success');
+    } else {
+      updateMixPlaylistUI(pl);
+    }
+  }
+
+  function refreshMixPlaylistRows(pl) {
+    if (!pl || state.currentView !== 'playlist-detail' || state.currentPlaylistId !== pl.id) return;
+    openPlaylistDetail(pl.id);
+  }
+
+  function openMixPanel() {
+    const pl = mixCurrentPlaylist();
+    if (!pl) return;
+    mixEnsureState(pl);
+    mixEnsureTransitions(pl);
+    mixPrep.cacheEnabled = pl.mix.cacheAudio !== false;
+    mixPrep.panelPlaylistId = pl.id;
+    updateMixPlaylistUI(pl);
+    refreshMixPlaylistRows(pl);
+  }
+
+  if (el.btnMixSettings) {
+    el.btnMixSettings.addEventListener('click', () => openMixPanel());
+  }
+  if (el.btnMixPlaylist) {
+    el.btnMixPlaylist.addEventListener('click', () => {
+      const pl = mixCurrentPlaylist();
+      if (!pl) return;
+      const mix = mixEnsureState(pl);
+      if (mixPrep.running && mixPrep.playlistId === pl.id) return;
+      const readiness = mixReadiness(pl);
+      if (mix.enabled && readiness.mixReady) {
+        mix.enabled = false;
+        if (state.mixPlaylistId === pl.id) {
+          state.mixPlaylistId = null;
+          resetMixPlayback();
+          dropCrossfadePrep();
+          stopCrossfadeTail(0);
+        }
+        mixPersist(pl);
+        mixPrep.panelPlaylistId = null;
+        updateMixPlaylistUI(pl);
+        showToast(T('Mix turned off'), 'info');
+        return;
+      }
+      if (!readiness.mixReady || mixPrep.paused || (readiness.fallback > 0 && !mix.enabled)) {
+        openMixPanel();
+        return;
+      }
+      mix.enabled = true;
+      mix.analysisVersion = MIX_VERSION;
+      mix.preparedFingerprint = mixFingerprint(pl);
+      mix.preparedAt = Date.now();
+      mixEnsureTransitions(pl);
+      mixPersist(pl);
+      cancelEndFade();
+      dropCrossfadePrep();
+      resetMixPlayback();
+      const playingThisPlaylist = state.currentTrack && (pl.tracks || []).some((t) => isSameTrack(t, state.currentTrack));
+      if (state.currentView === 'playlist-detail' && state.currentPlaylistId === pl.id && playingThisPlaylist) {
+        state.mixPlaylistId = pl.id;
+      }
+      updateMixPlaylistUI(pl);
+      refreshMixPlaylistRows(pl);
+      showToast(T('Mix is on'), 'success');
+    });
+  }
+
+  if (el.mixPrepStart) {
+    el.mixPrepStart.addEventListener('click', () => {
+      const pl = mixCurrentPlaylist();
+      if (!pl || mixPrep.running) return;
+      const readiness = mixReadiness(pl);
+      if (readiness.mixReady) {
+        const mix = mixEnsureState(pl);
+        mix.enabled = true;
+        mix.preparedFingerprint = mixFingerprint(pl);
+        mix.preparedAt = Date.now();
+        mixPersist(pl);
+        const playingThisPlaylist = state.currentTrack && (pl.tracks || []).some((t) => isSameTrack(t, state.currentTrack));
+        if (state.currentPlaylistId === pl.id && playingThisPlaylist) {
+          state.mixPlaylistId = pl.id;
+          cancelEndFade();
+          dropCrossfadePrep();
+          resetMixPlayback();
+        }
+        mixPrep.panelPlaylistId = null;
+        updateMixPlaylistUI(pl);
+        refreshMixPlaylistRows(pl);
+        return;
+      }
+      runMixPreparation(pl);
+    });
+  }
+  if (el.mixPrepRetry) {
+    el.mixPrepRetry.addEventListener('click', () => {
+      const pl = mixCurrentPlaylist();
+      if (!pl || mixPrep.running) return;
+      runMixPreparation(pl, { retry: true, onlyFallback: true });
+    });
+  }
+  if (el.mixPrepCache) {
+    el.mixPrepCache.addEventListener('click', () => {
+      const pl = mixCurrentPlaylist();
+      if (!pl || mixPrep.running) return;
+      runMixPreparation(pl, { cacheOnly: true });
+    });
+  }
+  if (el.mixCacheAudio) {
+    el.mixCacheAudio.addEventListener('change', () => {
+      const pl = mixCurrentPlaylist();
+      if (!pl) return;
+      const wasEnabled = mixPrep.cacheEnabled !== false;
+      mixPrep.cacheEnabled = !!el.mixCacheAudio.checked;
+      const mix = mixEnsureState(pl);
+      mix.cacheAudio = mixPrep.cacheEnabled;
+      // turning caching back on should re-check the files instead of trusting an old "cached" badge
+      if (mixPrep.cacheEnabled && !wasEnabled) mix.cachePreparedAt = 0;
+      mixPersist(pl, false);
+      updateMixPlaylistUI(pl);
+    });
+  }
+  if (el.mixPrepCancel) {
+    el.mixPrepCancel.addEventListener('click', () => pauseMixPreparation());
+  }
+  if (el.mixPrepClose) {
+    el.mixPrepClose.addEventListener('click', () => {
+      mixPrep.panelPlaylistId = null;
+      mixPrep.lastError = '';
+      const pl = mixCurrentPlaylist();
+      if (pl) {
+        updateMixPlaylistUI(pl);
+        refreshMixPlaylistRows(pl);
+      }
+    });
+  }
+  // Per-transition editor. Each adjacent pair owns its settings in pl.mix.transitions.
+  let mixTransitionEdit = null;
+  let mixTransitionWaveState = null;
+  let mixCueDrag = null;
+
+  function renderMixTransitionWave(fromTrack, toTrack, settings) {
+    const canvas = el.mixTransitionWave;
+    if (!canvas) return;
+    requestAnimationFrame(() => {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const W = canvas.width;
+      const H = canvas.height;
+      const styles = getComputedStyle(document.documentElement);
+      const primary = styles.getPropertyValue('--md-sys-color-primary').trim() || '#a8c7fa';
+      const outline = styles.getPropertyValue('--md-sys-color-outline').trim() || '#918f99';
+      ctx.clearRect(0, 0, W, H);
+
+      const a = mixGetAnalysis(fromTrack);
+      const b = mixGetAnalysis(toTrack);
+      const fallbackBars = 96;
+      const peaksA = a && Array.isArray(a.peaks) && a.peaks.length
+        ? a.peaks
+        : (window.CanaryTrim ? window.CanaryTrim.placeholderPeaks(window.CanaryMixPrep ? window.CanaryMixPrep.trackKey(fromTrack) : 'a', fallbackBars) : []);
+      const peaksB = b && Array.isArray(b.peaks) && b.peaks.length
+        ? b.peaks
+        : (window.CanaryTrim ? window.CanaryTrim.placeholderPeaks(window.CanaryMixPrep ? window.CanaryMixPrep.trackKey(toTrack) : 'b', fallbackBars) : []);
+      const pad = 7 * dpr;
+      const mid = H / 2;
+      const drawRow = (peaks, from, to, color) => {
+        if (!peaks.length) return;
+        const step = (to - from) / peaks.length;
+        const barW = Math.max(1, step * 0.62);
+        ctx.fillStyle = color;
+        for (let i = 0; i < peaks.length; i++) {
+          const value = Math.max(0.08, Math.min(1, Number(peaks[i]) || 0));
+          const h = value * (mid - pad * 1.6);
+          ctx.fillRect(from + i * step + (step - barW) / 2, mid - h, barW, h);
+        }
+      };
+      ctx.globalAlpha = 0.68;
+      drawRow(peaksA, pad, W - pad, primary);
+      ctx.globalAlpha = 0.42;
+      drawRow(peaksB, pad, W - pad, outline);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = `${primary}66`;
+      ctx.lineWidth = Math.max(1, dpr);
+      ctx.beginPath();
+      ctx.moveTo(0, mid);
+      ctx.lineTo(W, mid);
+      ctx.stroke();
+
+      const durationA = Math.max(1, Number(a && a.duration) || Number(fromTrack && fromTrack.duration) || 180);
+      const durationB = Math.max(1, Number(b && b.duration) || Number(toTrack && toTrack.duration) || 180);
+      const plan = window.CanaryMixCore && a && b
+        ? window.CanaryMixCore.planTransition({ fromAnalysis: a, toAnalysis: b, settings, end: durationA, playbackRate: 1 })
+        : null;
+      const manualExit = mixTransitionEdit && mixTransitionEdit.exit != null && Number.isFinite(Number(mixTransitionEdit.exit))
+        ? Math.max(0, Math.min(durationA, Number(mixTransitionEdit.exit)))
+        : null;
+      const manualEntry = mixTransitionEdit && mixTransitionEdit.entry != null && Number.isFinite(Number(mixTransitionEdit.entry))
+        ? Math.max(0, Math.min(durationB, Number(mixTransitionEdit.entry)))
+        : null;
+      const exitTime = manualExit != null ? manualExit : (plan ? plan.point : Math.max(0, durationA - 8));
+      const entryTime = manualEntry != null ? manualEntry : (plan && plan.entry != null ? plan.entry : 0);
+      const exitX = Math.max(0, Math.min(W, (exitTime / durationA) * W));
+      const entryX = Math.max(0, Math.min(W, (entryTime / durationB) * W));
+      const tailSeconds = Math.max(0, durationA - exitTime);
+      const incomingEnd = Math.max(entryX, Math.min(W, ((entryTime + (plan ? plan.duration : tailSeconds)) / durationB) * W));
+
+      ctx.fillStyle = `${primary}20`;
+      ctx.fillRect(exitX, pad, W - exitX, mid - pad * 1.6);
+      ctx.fillStyle = `${outline}20`;
+      ctx.fillRect(entryX, mid, incomingEnd - entryX, mid - pad * 1.6);
+
+      const drawCue = (x, from, to, color) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, dpr * 1.5);
+        ctx.beginPath();
+        ctx.moveTo(x, from);
+        ctx.lineTo(x, to);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, (from + to) / 2, 4 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      drawCue(exitX, pad, mid - pad, primary);
+      drawCue(entryX, mid + pad, H - pad, outline);
+
+      ctx.font = `${Math.round(10 * dpr)}px system-ui, sans-serif`;
+      ctx.fillStyle = primary;
+      ctx.fillText('OUTGOING', pad, pad + 10 * dpr);
+      ctx.fillStyle = outline;
+      ctx.fillText('INCOMING', pad, mid + pad + 12 * dpr);
+
+      // Pointer drag maps x back through these values.
+      mixTransitionWaveState = { durationA, durationB, width: rect.width, height: rect.height };
+      if (el.mixTransitionCues) {
+        const fmt = (value) => (window.CanaryTrim && window.CanaryTrim.formatPreciseTime
+          ? window.CanaryTrim.formatPreciseTime(value)
+          : `${Math.round(value)}s`);
+        el.mixTransitionCues.innerHTML = `<span class="cue-out">Out: ${manualExit != null ? fmt(exitTime) : 'Auto'}</span><span class="cue-in">In: ${manualEntry != null ? fmt(entryTime) : 'Auto'}</span>`;
+      }
+    });
+  }
+
+  function syncMixTransitionControls(settings) {
+    if (mixTransitionEdit) {
+      mixTransitionEdit.entry = settings.entry != null && Number.isFinite(Number(settings.entry)) ? Number(settings.entry) : null;
+      mixTransitionEdit.exit = settings.exit != null && Number.isFinite(Number(settings.exit)) ? Number(settings.exit) : null;
+    }
+    if (el.mixTransitionEnabled) el.mixTransitionEnabled.checked = settings.enabled !== false;
+    if (el.mixTransitionPreset) el.mixTransitionPreset.value = settings.preset || 'auto';
+    if (el.mixTransitionBars) el.mixTransitionBars.value = String(settings.bars || 8);
+    if (el.mixTransitionCurve) el.mixTransitionCurve.value = settings.curve || 'equal';
+    if (el.mixTransitionBpm) el.mixTransitionBpm.checked = settings.bpmMatch !== false;
+    const eq = settings.eq && typeof settings.eq === 'object' ? settings.eq : {};
+    const put = (node, value) => { if (node) node.value = String(value || 0); };
+    put(el.mixTrOutLow, eq.outLow);
+    put(el.mixTrOutMid, eq.outMid);
+    put(el.mixTrOutHigh, eq.outHigh);
+    put(el.mixTrInLow, eq.inLow);
+    put(el.mixTrInMid, eq.inMid);
+    put(el.mixTrInHigh, eq.inHigh);
+    put(el.mixTrFilter, settings.filter);
+    updateMixTransitionLabels();
+    if (mixTransitionEdit) {
+      renderMixTransitionWave(mixTransitionEdit.fromTrack, mixTransitionEdit.toTrack, settings);
+    }
+  }
+
+  function updateMixTransitionLabels() {
+    const rows = [
+      [el.mixTrOutLow, el.mixTrOutLowVal], [el.mixTrOutMid, el.mixTrOutMidVal], [el.mixTrOutHigh, el.mixTrOutHighVal],
+      [el.mixTrInLow, el.mixTrInLowVal], [el.mixTrInMid, el.mixTrInMidVal], [el.mixTrInHigh, el.mixTrInHighVal]
+    ];
+    for (const [input, output] of rows) {
+      if (input && output) output.textContent = `${parseInt(input.value, 10) || 0} dB`;
+    }
+    if (el.mixTrFilter && el.mixTrFilterVal) {
+      const value = parseInt(el.mixTrFilter.value, 10) || 0;
+      el.mixTrFilterVal.textContent = value > 0 ? `${value}%` : 'Preset';
+    }
+  }
+
+  function readMixTransitionControls() {
+    const valueOf = (node) => Math.max(0, Math.min(18, parseInt(node && node.value, 10) || 0));
+    return {
+      enabled: el.mixTransitionEnabled ? !!el.mixTransitionEnabled.checked : true,
+      preset: el.mixTransitionPreset ? el.mixTransitionPreset.value : 'auto',
+      bars: el.mixTransitionBars ? parseInt(el.mixTransitionBars.value, 10) || 8 : 8,
+      curve: el.mixTransitionCurve ? el.mixTransitionCurve.value : 'equal',
+      bpmMatch: el.mixTransitionBpm ? !!el.mixTransitionBpm.checked : true,
+      eq: {
+        outLow: valueOf(el.mixTrOutLow),
+        outMid: valueOf(el.mixTrOutMid),
+        outHigh: valueOf(el.mixTrOutHigh),
+        inLow: valueOf(el.mixTrInLow),
+        inMid: valueOf(el.mixTrInMid),
+        inHigh: valueOf(el.mixTrInHigh)
+      },
+      filter: Math.max(0, Math.min(100, parseInt(el.mixTrFilter && el.mixTrFilter.value, 10) || 0)),
+      entry: mixTransitionEdit ? mixTransitionEdit.entry : null,
+      exit: mixTransitionEdit ? mixTransitionEdit.exit : null
+    };
+  }
+
+  function openMixTransitionEditor(fromTrack, toTrack) {
+    const pl = mixCurrentPlaylist();
+    if (!pl || !fromTrack || !toTrack || !el.mixTransitionModal) return;
+    mixEnsureTransitions(pl);
+    mixTransitionEdit = { playlistId: pl.id, fromTrack, toTrack };
+    const settings = window.CanaryMixTransitions
+      ? (window.CanaryMixTransitions.transitionFor(pl, fromTrack, toTrack) || window.CanaryMixTransitions.makeDefault())
+      : {};
+    if (el.mixTransitionTracks) {
+      el.mixTransitionTracks.innerHTML = `<b>${escapeHtml(fromTrack.title || 'untitled')}</b> → <b>${escapeHtml(toTrack.title || 'next song')}</b>`;
+    }
+    syncMixTransitionControls(settings);
+    openModal(el.mixTransitionModal);
+  }
+
+  function closeMixTransitionEditor() {
+    mixTransitionEdit = null;
+    mixTransitionWaveState = null;
+    mixCueDrag = null;
+    if (el.mixTransitionModal) closeModal(el.mixTransitionModal);
+  }
+
+  if (el.mixTransitionSave) {
+    el.mixTransitionSave.addEventListener('click', () => {
+      if (!mixTransitionEdit) return;
+      const { fromTrack, toTrack, playlistId } = mixTransitionEdit;
+      const values = readMixTransitionControls();
+      const pl = state.playlists.find((p) => p.id === playlistId);
+      if (pl && window.CanaryMixTransitions) {
+        window.CanaryMixTransitions.updateTransition(pl, fromTrack, toTrack, values);
+        mixPersist(pl, false);
+        updateMixRowStatuses(pl);
+      }
+      closeMixTransitionEditor();
+      showToast(T('Transition saved'), 'success');
+    });
+  }
+  if (el.mixTransitionReset) {
+    el.mixTransitionReset.addEventListener('click', () => {
+      if (!mixTransitionEdit) return;
+      const { fromTrack, toTrack, playlistId } = mixTransitionEdit;
+      const pl = state.playlists.find((p) => p.id === playlistId);
+      if (pl && window.CanaryMixTransitions) {
+        window.CanaryMixTransitions.resetTransition(pl, fromTrack, toTrack);
+        mixPersist(pl, false);
+        updateMixRowStatuses(pl);
+      }
+      closeMixTransitionEditor();
+      showToast(T('Transition reset to Auto'), 'info');
+    });
+  }
+  if (el.mixTransitionCancel) el.mixTransitionCancel.addEventListener('click', closeMixTransitionEditor);
+  if (el.mixTransitionModal) {
+    el.mixTransitionModal.addEventListener('click', (e) => { if (e.target === el.mixTransitionModal) closeMixTransitionEditor(); });
+  }
+  [el.mixTrOutLow, el.mixTrOutMid, el.mixTrOutHigh, el.mixTrInLow, el.mixTrInMid, el.mixTrInHigh, el.mixTrFilter].forEach((node) => {
+    if (node) node.addEventListener('input', updateMixTransitionLabels);
+  });
+  [el.mixTransitionPreset, el.mixTransitionBars].forEach((node) => {
+    if (!node) return;
+    node.addEventListener('change', () => {
+      if (!mixTransitionEdit) return;
+      renderMixTransitionWave(mixTransitionEdit.fromTrack, mixTransitionEdit.toTrack, readMixTransitionControls());
+    });
+  });
+
+  if (el.mixTransitionWave) {
+    const canvas = el.mixTransitionWave;
+    const setCue = (kind, clientX) => {
+      if (!mixTransitionEdit) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width) return;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const state = mixTransitionWaveState || { durationA: 180, durationB: 180 };
+      const duration = kind === 'exit' ? state.durationA : state.durationB;
+      let seconds = ratio * duration;
+      const analysis = mixGetAnalysis(kind === 'exit' ? mixTransitionEdit.fromTrack : mixTransitionEdit.toTrack);
+      if (analysis && window.CanaryMixCore) {
+        seconds = window.CanaryMixCore.nearestBeat(seconds, analysis, 'nearest');
+      }
+      if (kind === 'exit') mixTransitionEdit.exit = Math.max(0.25, Math.min(Math.max(0.25, duration - 1.5), seconds));
+      else mixTransitionEdit.entry = Math.max(0, Math.min(Math.max(0, duration - 0.5), seconds));
+      renderMixTransitionWave(mixTransitionEdit.fromTrack, mixTransitionEdit.toTrack, readMixTransitionControls());
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!mixTransitionEdit) return;
+      const rect = canvas.getBoundingClientRect();
+      mixCueDrag = (e.clientY - rect.top) < rect.height / 2 ? 'exit' : 'entry';
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+      setCue(mixCueDrag, e.clientX);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!mixCueDrag) return;
+      e.preventDefault();
+      setCue(mixCueDrag, e.clientX);
+    });
+    const endCueDrag = (e) => {
+      if (!mixCueDrag) return;
+      mixCueDrag = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    canvas.addEventListener('pointerup', endCueDrag);
+    canvas.addEventListener('pointercancel', endCueDrag);
+    canvas.addEventListener('dblclick', (e) => {
+      if (!mixTransitionEdit) return;
+      const rect = canvas.getBoundingClientRect();
+      if ((e.clientY - rect.top) < rect.height / 2) mixTransitionEdit.exit = null;
+      else mixTransitionEdit.entry = null;
+      renderMixTransitionWave(mixTransitionEdit.fromTrack, mixTransitionEdit.toTrack, readMixTransitionControls());
+    });
+  }
+
   function renderTracks(container, tracks, context = 'search') {
     if (!container) return;
     
@@ -8725,6 +10096,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       container.style.paddingBottom = `${(tracks.length - endIndex) * itemHeight}px`;
       container._hasInitialRendered = true;
       highlightPlayingRow();
+      updateMixRowStatuses();
     }
     
     container._vScrollHandler = () => {
@@ -8744,6 +10116,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     container._hasInitialRendered = false;
     container._lastStartIndex = -1;
     container._lastEndIndex = -1;
+    // a playlist can gain or lose its transition strips (which changes the row height)
+    container._rowPitch = null;
     renderChunk();
   }
 
@@ -10087,6 +11461,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const [moved] = pl.tracks.splice(fromIdx, 1);
       pl.tracks.splice(toIdx, 0, moved);
       localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists));
+      updateMixPlaylistUI(pl);
+      // the per-transition chips hold the pair they were rendered for; rebuild them for the new order
+      setTimeout(() => {
+        if (state.currentPlaylistId === pl.id && state.currentView === 'playlist-detail') openPlaylistDetail(pl.id);
+      }, 200);
     }
   });
 
@@ -10112,10 +11491,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   function openPlaylistDetail(playlistId) {
     const pl = state.playlists.find(p => p.id === playlistId);
     if (!pl) return;
+    // leaving a playlist pauses its preparation job; the analyses that finished stay cached
+    if (mixPrep.running && mixPrep.playlistId && mixPrep.playlistId !== playlistId) pauseMixPreparation();
+    if (mixPrep.panelPlaylistId && mixPrep.panelPlaylistId !== playlistId) mixPrep.panelPlaylistId = null;
     // the page shares its scroll with the view it was opened from: opened from "Your playlists" low on the
     // home screen, it showed up halfway down its song list with the header out of sight
     const opening = state.currentView !== 'playlist-detail' || state.currentPlaylistId !== playlistId;
     state.currentPlaylistId = playlistId;
+    if (pl.mix && (pl.mix.enabled || pl.mix.preparedAt || mixPrep.panelPlaylistId === pl.id || mixPrep.running
+      || (window.CanaryMixTransitions && window.CanaryMixTransitions.hasLegacy(pl)))) {
+      mixEnsureTransitions(pl);
+    }
     if (el.playlistDetailTitle) el.playlistDetailTitle.textContent = pl.name;
     const query = el.playlistSearchInput ? normalizeSearch(el.playlistSearchInput.value) : '';
     let filtered = pl.tracks;
@@ -10152,6 +11538,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (opening) { const main = document.querySelector('.main-content'); if (main) main.scrollTop = 0; }
     if (el.playlistTracksList) renderTracks(el.playlistTracksList, filtered, 'playlist');
+    updateMixPlaylistUI(pl);
     switchView('playlist-detail');
     renderPlaylistsList();
   }
@@ -10396,6 +11783,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function deleteCurrentPlaylist() {
     if (!state.currentPlaylistId) return;
+    if (state.mixPlaylistId === state.currentPlaylistId) {
+      state.mixPlaylistId = null;
+      resetMixPlayback();
+    }
+    if (mixPrep.playlistId === state.currentPlaylistId) pauseMixPreparation();
     state.playlists = state.playlists.filter(p => p.id !== state.currentPlaylistId);
     localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists));
     state.currentPlaylistId = null;
@@ -10530,6 +11922,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (fresh.length) {
               localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists));
               renderPlaylistsList();
+              if (pl.id === state.currentPlaylistId) {
+                updateMixPlaylistUI(pl);
+                if (state.currentView === 'playlist-detail') openPlaylistDetail(pl.id);
+              }
             }
             showToast(!fresh.length ? Tm('Already in "{0}"', pl.name) : fresh.length === 1 ? Tm('Added 1 track to "{0}"', pl.name) : Tm('Added {0} tracks to "{1}"', fresh.length, pl.name), fresh.length ? 'success' : 'info');
           } else if (track) {
@@ -10537,6 +11933,10 @@ document.addEventListener('DOMContentLoaded', async () => {
               pl.tracks.push(stampAddedAt(track));
               localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists));
               renderPlaylistsList();
+              if (pl.id === state.currentPlaylistId) {
+                updateMixPlaylistUI(pl);
+                if (state.currentView === 'playlist-detail') openPlaylistDetail(pl.id);
+              }
               showToast(Tm('Added to "{0}"', pl.name), 'success');
             } else {
               showToast(Tm('Already in "{0}"', pl.name), 'info');
@@ -10554,6 +11954,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function switchView(viewName) {
     // the queue lives in the drawer now, not in its own page
     if (viewName === 'queue') { openPanelDrawer('queue'); return; }
+    // preparation is an explicit, visible step: leaving the playlist pauses it and keeps partial results
+    if (viewName !== 'playlist-detail' && mixPrep.running) pauseMixPreparation();
     state.currentView = viewName;
     if (multiSel.active) {
       const keep = (viewName === 'playlist-detail' && multiSel.context === 'playlist') || (viewName === 'favorites' && multiSel.context === 'favorites');
@@ -11261,13 +12663,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (el.btnPrev) el.btnPrev.addEventListener('click', playPrev);
 
   function setShuffle(on) {
+    const wasShuffle = state.isShuffle;
     state.isShuffle = !!on;
     localStorage.setItem('canary_shuffle', state.isShuffle ? '1' : '0');
+    // Per-pair transitions only make sense in playlist order. Shuffle pauses Mix for this listening
+    // session; the playlist's Mix setting stays on and comes back when Shuffle is turned off.
+    if (state.isShuffle && !wasShuffle && state.mixPlaylistId) {
+      state.mixPlaylistId = null;
+      resetMixPlayback();
+      dropCrossfadePrep();
+      stopCrossfadeTail(0);
+      showToast(T('Mix transitions are paused while Shuffle is on'), 'info');
+    } else if (!state.isShuffle && wasShuffle) {
+      const pl = state.playlists.find((p) => p.id === state.currentPlaylistId);
+      const playing = state.currentTrack && pl && (pl.tracks || []).some((t) => isSameTrack(t, state.currentTrack));
+      if (pl && pl.mix && pl.mix.enabled && playing && mixReadiness(pl).mixReady) {
+        mixEnsureTransitions(pl);
+        state.mixPlaylistId = pl.id;
+      }
+    }
     if (el.btnShuffle) el.btnShuffle.classList.toggle('active', state.isShuffle);
     if (el.btnTvkShuffle) {
       el.btnTvkShuffle.classList.toggle('active', state.isShuffle);
       el.btnTvkShuffle.setAttribute('aria-pressed', String(state.isShuffle));
     }
+    const current = state.playlists.find((p) => p.id === state.currentPlaylistId);
+    if (current) updateMixPlaylistUI(current);
     window.dispatchEvent(new Event('canary:modes')); // the phone's lock-screen / Dynamic Island buttons follow
   }
   if (el.btnShuffle) {
@@ -21778,7 +23199,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   emitPluginEvent('ready');
 
   // ---- Core API for the iPhone interface (mobile/ui), which draws its own screens on this engine ----
-  const savePlaylists = () => { localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists)); renderPlaylistsList(); window.dispatchEvent(new Event('canary:library')); };
+  const savePlaylists = () => {
+    localStorage.setItem('devsize_playlists', JSON.stringify(state.playlists));
+    renderPlaylistsList();
+    window.dispatchEvent(new Event('canary:library'));
+    const current = state.playlists.find((p) => p.id === state.currentPlaylistId);
+    if (current) updateMixPlaylistUI(current);
+  };
   window.CanaryCore = {
     state,
     audio: el.nativeAudio,

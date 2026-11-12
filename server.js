@@ -24,6 +24,7 @@ const { copyStreamToCache } = require('./cache-copy');
 const streamSource = require('./stream-source');
 const downloadProgressHelper = require('./download-progress');
 const ytFast = require('./yt-fast');
+const mixAnalysis = require('./mix-analysis');
 // request headers yt-dlp would use for each media URL it resolved (#17), for the audio proxy
 const streamHeaders = new Map();
 function rememberStreamHeaders(url, headers) {
@@ -273,13 +274,25 @@ function dropCachedPreviews() {
 }
 try { dropCachedPreviews(); } catch (e) {}
 
-function saveTrackMetadata(cleanId, meta) {
+function saveTrackMetadata(cleanId, meta, touchLastPlayed = true) {
   // "__proto__" survives cleanTrackId and would swap the index's prototype instead of adding an entry
   if (!cleanId || cleanId === '__proto__') return;
   trackMetadataIndex[cleanId] = {
     ...(trackMetadataIndex[cleanId] || {}),
     ...meta,
-    lastPlayed: Date.now()
+    ...(touchLastPlayed ? { lastPlayed: Date.now() } : {})
+  };
+  try {
+    writeJsonFile(METADATA_PATH, trackMetadataIndex);
+  } catch (e) {}
+}
+
+// Analysis is not playback: preparing a playlist must not make every song look like it was just played.
+function saveTrackAnalysis(cleanId, analysis) {
+  if (!cleanId || cleanId === '__proto__') return;
+  trackMetadataIndex[cleanId] = {
+    ...(trackMetadataIndex[cleanId] || {}),
+    analysis
   };
   try {
     writeJsonFile(METADATA_PATH, trackMetadataIndex);
@@ -1768,7 +1781,7 @@ async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, prior
     try {
       const stat = await fs.promises.stat(tempPath);
       await fs.promises.rename(tempPath, path.join(CACHE_DIR, `${cleanId}.opus`));
-      saveTrackMetadata(cleanId, { id: trackId, title: meta.title || '', artist: meta.artist || '', duration: meta.duration || 0, thumbnail: meta.thumbnail || '', platform: platform || 'youtube', fileSize: stat.size });
+      saveTrackMetadata(cleanId, { id: trackId, title: meta.title || '', artist: meta.artist || '', duration: meta.duration || 0, thumbnail: meta.thumbnail || '', platform: platform || 'youtube', fileSize: stat.size }, !meta.prepareOnly);
     } catch (e) { return false; }
     if (downloadProcs.get(cleanId) === placeholder) downloadProcs.delete(cleanId);
     return true;
@@ -1816,7 +1829,7 @@ async function downloadTrackToDisk(trackUrl, trackId, platform, meta = {}, prior
               thumbnail: meta.thumbnail || '',
               platform: platform || 'youtube',
               fileSize: stat.size
-            });
+            }, !meta.prepareOnly);
           } else {
             try { await fs.promises.unlink(found); } catch (e) {}
           }
@@ -2617,6 +2630,261 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(failure));
   }
+}
+
+// ---- Canary Mix: analysis for playlists ----
+// One analysis at a time: ffmpeg decoding a long song is CPU-heavy and must not compete with playback.
+let mixAnalysisChain = Promise.resolve();
+function enqueueMixAnalysis(task) {
+  const run = mixAnalysisChain.then(task, task);
+  mixAnalysisChain = run.catch(() => {});
+  return run;
+}
+
+// ffmpeg reads the stream through Canary's own proxy, so YouTube's signed media URL gets the headers
+// yt-dlp resolved it with (the same path the audio element uses).
+function mixAnalysisSourceUrl(streamUrl) {
+  const address = server.address();
+  const boundPort = address && typeof address === 'object' ? address.port : PORT;
+  return withToken(`http://127.0.0.1:${boundPort}/api/audio-proxy?url=${encodeURIComponent(streamUrl)}`);
+}
+
+// The beat grid is constant-tempo (bpm + first beat); the full array of beat times would eat the
+// localStorage budget after a handful of long playlists. Keep it out of the cached record.
+function compactMixAnalysis(analysis) {
+  if (!analysis || typeof analysis !== 'object') return analysis;
+  const { beats, ...rest } = analysis;
+  return rest;
+}
+
+function cachedMixAnalysis(cleanId, duration = 0) {
+  if (!cleanId) return null;
+  const meta = trackMetadataIndex[cleanId];
+  const analysis = meta && meta.analysis;
+  if (!analysis || Number(analysis.v) !== mixAnalysis.VERSION) return null;
+  // a length change means the cached grid no longer belongs to the audio (radio edits, re-uploads)
+  if (duration > 0 && Number(analysis.duration) > 0 && Math.abs(Number(analysis.duration) - duration) > 2) return null;
+  return analysis;
+}
+
+async function resolveMixAnalysisInput({ id, url, platform, title, artist, duration }) {
+  const cleanId = cleanTrackId(id);
+
+  if (platform === 'local') {
+    const item = cleanId && hasOwn(libraryIndex, cleanId) ? libraryIndex[cleanId] : null;
+    if (item && item.file) {
+      const filePath = path.join(LIBRARY_DIR, item.file);
+      if (fs.existsSync(filePath)) return { kind: 'file', source: filePath, cleanId, hls: false };
+    }
+  }
+
+  const cachedFile = cleanId ? await findCachedFile(cleanId) : null;
+  if (cachedFile) return { kind: 'file', source: cachedFile, cleanId, hls: false };
+
+  const downloadedName = (title || artist) ? await findDownloadedFile(title, artist) : null;
+  if (downloadedName) {
+    const filePath = path.join(getDownloadsDir(), path.basename(String(downloadedName)));
+    if (fs.existsSync(filePath)) return { kind: 'file', source: filePath, cleanId, hls: false };
+  }
+
+  const cacheKey = (cleanId || url || `${artist}_${title}`).toLowerCase();
+  const cached = streamUrlCache.get(cacheKey) || (cleanId ? streamUrlCache.get(cleanId) : null);
+  if (cached && !cached.promise && cached.data && cached.data.streamUrl && Date.now() - cached.timestamp < 1800000) {
+    return {
+      kind: 'url',
+      source: mixAnalysisSourceUrl(cached.data.streamUrl),
+      streamUrl: cached.data.streamUrl,
+      cleanId,
+      hls: !!cached.data.isHls || /\.m3u8/i.test(cached.data.streamUrl)
+    };
+  }
+
+  const target = youtubeExtractTarget(url, cleanId, platform);
+  let streamUrl = null;
+  if (isSafeMediaUrl(target.url) && target.youtube) streamUrl = await fastYouTubeStream(target.url, cleanId);
+
+  if (!streamUrl && isSafeMediaUrl(target.url)) {
+    try {
+      const args = ['--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best'];
+      if (target.youtube) args.push('--extractor-args', YT_PLAYER_CLIENTS);
+      args.push('--', target.url);
+      const raw = await executeYtDlp(args, 25000, { key: `mix:${target.url}`, priority: 'background', reason: 'mix-analysis' });
+      const found = streamSource.parseLookup(raw);
+      if (found.url) { streamUrl = found.url; rememberStreamHeaders(found.url, found.headers); }
+    } catch (e) {}
+  }
+
+  if (!streamUrl && platform !== 'local' && (title || artist)) {
+    for (const alt of await alternativeUploads(cleanId, title, artist, duration)) {
+      try {
+        const raw = await executeYtDlp(['--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best', '--extractor-args', YT_PLAYER_CLIENTS, '--', alt], 18000, { key: `mix:${alt}`, priority: 'background', reason: 'mix-analysis-alternative' });
+        const found = streamSource.parseLookup(raw);
+        if (found.url) { streamUrl = found.url; rememberStreamHeaders(found.url, found.headers); break; }
+      } catch (e) {}
+    }
+  }
+
+  if (!streamUrl && (title || artist)) {
+    try {
+      const sc = await soundcloudFallback(title, artist, duration);
+      if (sc) {
+        const raw = await executeYtDlp(['--no-config', '-g', '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best', '--', sc], 15000, { key: `mix:${sc}`, priority: 'background', reason: 'mix-analysis-soundcloud' });
+        const line = raw.trim().split('\n').map((l) => l.trim()).find((l) => l.startsWith('http'));
+        if (line) streamUrl = line;
+      }
+    } catch (e) {}
+  }
+
+  if (!streamUrl) return { kind: 'unavailable', cleanId, hls: false };
+  return { kind: 'url', source: mixAnalysisSourceUrl(streamUrl), streamUrl, cleanId, hls: /\.m3u8/i.test(streamUrl) };
+}
+
+function decodeMixAudio(source) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = resolveBinary('ffmpeg');
+    if (!ffmpeg) return reject(Object.assign(new Error('ffmpeg is required for Mix analysis'), { code: 'no-ffmpeg' }));
+    const args = [
+      '-hide_banner', '-nostdin', '-loglevel', 'error',
+      '-i', source,
+      '-vn', '-ac', '1', '-ar', '11025', '-t', '900',
+      '-f', 'f32le', 'pipe:1'
+    ];
+    let proc;
+    try {
+      proc = spawn(ffmpeg, args, { windowsHide: true });
+    } catch (e) {
+      return reject(Object.assign(e, { code: 'decode' }));
+    }
+    if (proc.pid) lowerPriority(proc.pid);
+    const chunks = [];
+    let size = 0;
+    let stderr = '';
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch (e) {}
+      finish(reject, Object.assign(new Error('Analysis timed out'), { code: 'timeout' }));
+    }, 180000);
+    proc.stdout.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 160 * 1024 * 1024) {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+        finish(reject, Object.assign(new Error('Audio is too long to analyze'), { code: 'too-long' }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-2000);
+    });
+    proc.on('error', (err) => finish(reject, Object.assign(err, { code: 'decode' })));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        return finish(reject, Object.assign(new Error(stderr || `ffmpeg exited with ${code}`), { code: 'decode' }));
+      }
+      const buffer = Buffer.concat(chunks);
+      if (!buffer.length) return finish(reject, Object.assign(new Error('No audio decoded'), { code: 'decode' }));
+      const length = Math.floor(buffer.length / 4);
+      const samples = new Float32Array(length);
+      for (let i = 0; i < length; i++) samples[i] = buffer.readFloatLE(i * 4);
+      finish(resolve, samples);
+    });
+  });
+}
+
+async function analyzeTrackForMix(query) {
+  const cleanId = cleanTrackId(query.id || '');
+  const duration = Number(query.duration) || 0;
+  const retry = query.retry === '1';
+  const existing = cachedMixAnalysis(cleanId, duration);
+  if (existing && !(retry && existing.fallback)) return { analysis: existing, cached: true };
+
+  return enqueueMixAnalysis(async () => {
+    const again = cachedMixAnalysis(cleanId, duration);
+    if (again && !(retry && again.fallback)) return { analysis: again, cached: true };
+
+    let analysis;
+    try {
+      const input = await resolveMixAnalysisInput(query);
+      if (input.kind === 'unavailable') {
+        analysis = mixAnalysis.fallback('unavailable', duration);
+      } else if (input.hls) {
+        // Mix cannot open an HLS stream twice, so do not spend a decode on it.
+        analysis = mixAnalysis.fallback('hls', duration);
+      } else {
+        const samples = await decodeMixAudio(input.source);
+        analysis = mixAnalysis.analyzeSamples(samples, 11025);
+      }
+    } catch (err) {
+      if (err && err.code === 'no-ffmpeg') throw err;
+      analysis = mixAnalysis.fallback(err && err.code === 'timeout' ? 'timeout' : 'decode', duration);
+    }
+    analysis = compactMixAnalysis(analysis);
+    if (cleanId) saveTrackAnalysis(cleanId, analysis);
+    return { analysis, cached: false };
+  });
+}
+
+// Ensure one playlist song is on this device. Used by Mix preparation (and a rolling next-song
+// prefetch) so a transition never has to wait for a network fetch after the hand-over.
+async function cacheTrackForMix(query) {
+  const cleanId = cleanTrackId(query.id || '');
+  const platform = query.platform || 'youtube';
+  const title = query.title || '';
+  const artist = query.artist || '';
+  const duration = Number(query.duration) || 0;
+  const meta = { title, artist, duration: duration || 0, thumbnail: query.thumbnail || '', prepareOnly: true };
+  if (!cleanId) return { success: false, code: 'no-id', error: 'Missing track id' };
+
+  const fileResult = async (filePath, extra = {}) => {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      return { success: true, cached: true, fileSize: stat.size, ...extra };
+    } catch (e) {
+      return { success: false, code: 'cache', error: 'Cached file is not readable' };
+    }
+  };
+
+  const existing = await findCachedFile(cleanId);
+  if (existing) return fileResult(existing);
+
+  if (platform === 'local') {
+    const item = hasOwn(libraryIndex, cleanId) ? libraryIndex[cleanId] : null;
+    if (item && item.file) {
+      const filePath = path.join(LIBRARY_DIR, item.file);
+      if (fs.existsSync(filePath)) return fileResult(filePath, { local: true });
+    }
+  }
+
+  const downloadedName = (title || artist) ? await findDownloadedFile(title, artist) : null;
+  if (downloadedName) {
+    const filePath = path.join(getDownloadsDir(), path.basename(String(downloadedName)));
+    if (fs.existsSync(filePath)) return fileResult(filePath, { downloaded: true });
+  }
+
+  const input = await resolveMixAnalysisInput({ id: cleanId, url: query.url || '', platform, title, artist, duration });
+  if (input.kind === 'file') return fileResult(input.source);
+  if (input.kind === 'unavailable') {
+    return { success: false, code: 'unavailable', error: 'This song could not be found to cache' };
+  }
+  if (input.hls) {
+    return { success: false, code: 'hls', error: 'Live/HLS songs cannot be cached for Mix' };
+  }
+
+  // downloadTrackToDisk copies from the already-resolved stream when possible, then falls back to
+  // yt-dlp. It is the same local cache playback uses (/api/local-track).
+  await downloadTrackToDisk(query.url || input.streamUrl, cleanId, platform, {
+    ...meta,
+    streamUrl: input.streamUrl
+  }, 'normal');
+  const cached = await findCachedFile(cleanId);
+  if (cached) return fileResult(cached);
+  return { success: false, code: 'cache', error: 'Could not download this song to the cache' };
 }
 
 const artistInFlight = new Map();
@@ -3831,6 +4099,8 @@ const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/prefetch',
   '/api/check-cache',
   '/api/stream-info',
+  '/api/analyze-track',
+  '/api/cache-track',
   '/api/track-analysis',
   '/api/tools-status',
   '/api/tools-install',
@@ -6928,6 +7198,52 @@ const server = http.createServer(guardHandler(async (req, res) => {
     return res.end(JSON.stringify({ success: true, count: tracks.length, totalBytes, tracks }));
   }
 
+  if (parsedUrl.pathname === '/api/analyze-track') {
+    try {
+      const { analysis, cached } = await analyzeTrackForMix({
+        id: parsedUrl.query.id || '',
+        url: parsedUrl.query.url || '',
+        platform: parsedUrl.query.platform || 'youtube',
+        title: parsedUrl.query.title || '',
+        artist: parsedUrl.query.artist || '',
+        duration: parsedUrl.query.duration || 0,
+        retry: parsedUrl.query.retry || ''
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, cached: !!cached, analysis: compactMixAnalysis(analysis) }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: false,
+        code: (err && err.code) || 'analysis',
+        error: (err && err.message) || 'Analysis failed'
+      }));
+    }
+  }
+
+  if (parsedUrl.pathname === '/api/cache-track') {
+    try {
+      const result = await cacheTrackForMix({
+        id: parsedUrl.query.id || '',
+        url: parsedUrl.query.url || '',
+        platform: parsedUrl.query.platform || 'youtube',
+        title: parsedUrl.query.title || '',
+        artist: parsedUrl.query.artist || '',
+        duration: parsedUrl.query.duration || 0,
+        thumbnail: parsedUrl.query.thumbnail || ''
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: false,
+        code: (err && err.code) || 'cache',
+        error: (err && err.message) || 'Could not cache this song'
+      }));
+    }
+  }
+
   if (parsedUrl.pathname === '/api/track-analysis') {
     if (req.method === 'POST') {
       let body = '';
@@ -6937,7 +7253,7 @@ const server = http.createServer(guardHandler(async (req, res) => {
           const payload = JSON.parse(body || '{}');
           const cleanId = cleanTrackId(payload.id || '');
           if (cleanId && payload.analysis) {
-            saveTrackMetadata(cleanId, { analysis: payload.analysis });
+            saveTrackAnalysis(cleanId, payload.analysis);
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true }));

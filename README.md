@@ -15,6 +15,7 @@ Canary is a fork of [Muriel](https://github.com/cloverscripts/riff-muriel), whic
 - **Local library** — reads tags and album art, folders and playlists, original files stay untouched
 - **Lyrics** — online synced lyrics, LRC files, manual timing, fullscreen karaoke
 - **Audio** — EQ, presets, real-time speed, reverb, and a small editor for trimming and exporting clips
+- **Canary Mix** — prepare a playlist once (tempo, key, beat grid, waveform and an optional local audio cache), then give every adjacent song pair its own beat-aligned Fade, Rise, Blend or No-mix transition, with volume/EQ/filter curves, draggable cue points and optional tempo matching
 - **Compact layout** — slim navigation rail, slide-over drawer for now playing, lyrics and the queue
 - **Custom background** — image, GIF or video, with optional glass blur on the interface; pauses while Canary is hidden
 - **Performance settings** — lightweight thumbnails, blur on/off, visualizer frame-rate cap, memory trimming in the background, hardware acceleration toggle

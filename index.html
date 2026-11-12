@@ -489,6 +489,13 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
                 <span>Shuffle</span>
               </button>
+              <button class="btn-outline-pill" id="btn-mix-playlist" title="Prepare this playlist for Mix" aria-label="Mix this playlist" aria-pressed="false">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h6"></path><path d="M14 6h6"></path><path d="M4 12h10"></path><path d="M18 12h2"></path><path d="M4 18h2"></path><path d="M10 18h10"></path><circle cx="12" cy="6" r="2"></circle><circle cx="16" cy="12" r="2"></circle><circle cx="8" cy="18" r="2"></circle></svg>
+                <span id="btn-mix-playlist-label">Mix</span>
+              </button>
+              <button class="btn-icon-pill hidden" id="btn-mix-settings" title="Mix preparation & audio cache" aria-label="Mix preparation and audio cache">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"></line><circle cx="9" cy="7" r="2.4" fill="var(--md-sys-color-surface)"></circle><line x1="4" y1="17" x2="20" y2="17"></line><circle cx="15" cy="17" r="2.4" fill="var(--md-sys-color-surface)"></circle></svg>
+              </button>
               <button class="btn-icon-pill" id="btn-share-playlist" title="Share playlist" aria-label="Share playlist">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>
               </button>
@@ -534,6 +541,40 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
               </button>
             </div>
+          </div>
+        </div>
+        <div class="mix-prep-panel hidden" id="mix-prep-panel">
+          <div class="mix-prep-top">
+            <div class="mix-prep-mark" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h6"></path><path d="M14 6h6"></path><path d="M4 12h10"></path><path d="M18 12h2"></path><path d="M4 18h2"></path><path d="M10 18h10"></path><circle cx="12" cy="6" r="2"></circle><circle cx="16" cy="12" r="2"></circle><circle cx="8" cy="18" r="2"></circle></svg>
+            </div>
+            <div class="mix-prep-copy">
+              <div class="mix-prep-title" id="mix-prep-title">Prepare this playlist for Mix</div>
+              <div class="mix-prep-subtitle" id="mix-prep-subtitle"></div>
+            </div>
+            <div class="mix-prep-count" id="mix-prep-count">0 / 0</div>
+          </div>
+          <div class="mix-prep-progress" id="mix-prep-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="mix-prep-bar" id="mix-prep-bar"></div>
+          </div>
+          <div class="mix-prep-current" id="mix-prep-current" aria-live="polite"></div>
+          <div class="mix-cache-row" id="mix-cache-row">
+            <label class="mix-prep-check">
+              <input type="checkbox" id="mix-cache-audio" checked>
+              <span>Cache songs for instant transitions</span>
+            </label>
+            <div class="mix-prep-cache-hint" id="mix-cache-hint"></div>
+            <div class="mix-cache-progress hidden" id="mix-cache-progress">
+              <div class="mix-cache-line"><span>Audio cache</span><span id="mix-cache-count">0 / 0</span></div>
+              <div class="mix-prep-progress"><div class="mix-prep-bar" id="mix-cache-bar"></div></div>
+            </div>
+          </div>
+          <div class="mix-prep-actions">
+            <button class="btn-pill-primary" id="mix-prep-start" type="button">Prepare playlist</button>
+            <button class="btn-outline-pill" id="mix-prep-cache" type="button" hidden>Cache songs</button>
+            <button class="btn-outline-pill" id="mix-prep-retry" type="button" hidden>Retry failed</button>
+            <button class="btn-outline-pill" id="mix-prep-cancel" type="button" hidden>Cancel</button>
+            <button class="btn-outline-pill" id="mix-prep-close" type="button">Not now</button>
           </div>
         </div>
         <div class="view-search-box" id="playlist-search-box">
@@ -2692,6 +2733,76 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="mix-transition-modal">
+    <div class="dialog-card mix-transition-card">
+      <h3>Transition</h3>
+      <div class="mix-transition-tracks" id="mix-transition-tracks"></div>
+      <label class="mix-prep-check mix-transition-enabled-row">
+        <input type="checkbox" id="mix-transition-enabled" checked>
+        <span>Mix this transition</span>
+      </label>
+      <div class="mix-adv-hint" style="margin: -6px 0 12px;">Off uses your normal Crossfade setting for this pair.</div>
+      <canvas class="mix-transition-wave" id="mix-transition-wave" height="120" aria-label="Transition waveform"></canvas>
+      <div class="mix-transition-cues" id="mix-transition-cues"></div>
+      <div class="mix-transition-grid">
+        <label class="mix-prep-field">
+          <span>Style</span>
+          <select class="pill-select" id="mix-transition-preset">
+            <option value="auto">Auto</option>
+            <option value="fade">Fade</option>
+            <option value="rise">Rise</option>
+            <option value="blend">Blend</option>
+          </select>
+        </label>
+        <label class="mix-prep-field">
+          <span>Length</span>
+          <select class="pill-select" id="mix-transition-bars">
+            <option value="2">2 bars</option>
+            <option value="4">4 bars</option>
+            <option value="8">8 bars</option>
+            <option value="16">16 bars</option>
+            <option value="32">32 bars</option>
+          </select>
+        </label>
+        <label class="mix-prep-field">
+          <span>Curve</span>
+          <select class="pill-select" id="mix-transition-curve">
+            <option value="equal">Equal power</option>
+            <option value="linear">Linear</option>
+            <option value="smooth">Smooth</option>
+          </select>
+        </label>
+        <label class="mix-prep-check">
+          <input type="checkbox" id="mix-transition-bpm" checked>
+          <span>Match tempo</span>
+        </label>
+      </div>
+      <div class="mix-prep-advanced mix-transition-advanced">
+        <div class="mix-adv-group">
+          <div class="mix-adv-title">Outgoing cut</div>
+          <label class="mix-adv-row"><span>Bass</span><input type="range" id="mix-tr-out-low" min="0" max="18" step="1" value="0"><output id="mix-tr-out-low-val">0 dB</output></label>
+          <label class="mix-adv-row"><span>Mids</span><input type="range" id="mix-tr-out-mid" min="0" max="18" step="1" value="0"><output id="mix-tr-out-mid-val">0 dB</output></label>
+          <label class="mix-adv-row"><span>Highs</span><input type="range" id="mix-tr-out-high" min="0" max="18" step="1" value="0"><output id="mix-tr-out-high-val">0 dB</output></label>
+        </div>
+        <div class="mix-adv-group">
+          <div class="mix-adv-title">Incoming cut</div>
+          <label class="mix-adv-row"><span>Bass</span><input type="range" id="mix-tr-in-low" min="0" max="18" step="1" value="0"><output id="mix-tr-in-low-val">0 dB</output></label>
+          <label class="mix-adv-row"><span>Mids</span><input type="range" id="mix-tr-in-mid" min="0" max="18" step="1" value="0"><output id="mix-tr-in-mid-val">0 dB</output></label>
+          <label class="mix-adv-row"><span>Highs</span><input type="range" id="mix-tr-in-high" min="0" max="18" step="1" value="0"><output id="mix-tr-in-high-val">0 dB</output></label>
+        </div>
+        <div class="mix-adv-group">
+          <div class="mix-adv-title">Filter sweep</div>
+          <label class="mix-adv-row"><span>Amount</span><input type="range" id="mix-tr-filter" min="0" max="100" step="5" value="0"><output id="mix-tr-filter-val">Preset</output></label>
+          <div class="mix-adv-hint">Closes the outgoing top and opens the incoming top during the overlap.</div>
+        </div>
+      </div>
+      <div class="dialog-actions mix-transition-actions">
+        <button class="btn-outline-pill" id="mix-transition-reset" type="button">Reset to Auto</button>
+        <button class="btn-outline-pill" id="mix-transition-cancel" type="button">Cancel</button>
+        <button class="btn-pill-primary" id="mix-transition-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
   <div class="modal-backdrop hidden" id="create-playlist-modal">
     <div class="dialog-card">
       <h3>Create playlist</h3>
@@ -3663,6 +3774,10 @@
   <script src="build-info.js"></script>
   <script src="share-link.js"></script>
   <script src="audio-route.js"></script>
+  <script src="mix-analysis.js"></script>
+  <script src="mix-prep.js"></script>
+  <script src="mix-core.js"></script>
+  <script src="mix-transitions.js"></script>
   <script src="app.js"></script>
   <script src="update-notifier.js"></script>
   <script src="lyrics-match.js"></script>

@@ -52,7 +52,8 @@ test('app.js uses the same proxy rule and falls back to the proxy before a fresh
 
 test('server lookups record the headers and the proxy uses them', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.equal((server.match(/rememberStreamHeaders\(/g) || []).length, 5);
+  // every stream resolver records the headers: playback, prefetch and Mix analysis
+  assert.equal((server.match(/rememberStreamHeaders\(/g) || []).length, 7);
   assert.match(server, /streamHeaders\.get\(targetUrl\)/);
   assert.doesNotMatch(server, /'-g', '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio\/best'\];\n\s+if \((ytTarget|target)\.youtube\)/);
 });

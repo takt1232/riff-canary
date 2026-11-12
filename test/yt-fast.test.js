@@ -24,6 +24,7 @@ test('video ids come from links and bare ids only', () => {
 
 test('song start and next-song lookups try the fast way before yt-dlp', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.equal((server.match(/await fastYouTubeStream\(/g) || []).length, 2);
+  // playback, prefetch and Mix analysis all try the fast lookup first
+  assert.equal((server.match(/await fastYouTubeStream\(/g) || []).length, 3);
   assert.ok(server.indexOf('await fastYouTubeStream(trackUrl, cleanId);') < server.indexOf("reason: 'stream' }"));
 });

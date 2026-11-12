@@ -39,6 +39,24 @@
       this.levelBuf = null;
       this.fadeGain = null;
       this.bus = null;
+      // Canary Mix: the incoming deck's transition EQ/filter sits before the master, and the outgoing
+      // tail gets its own identical chain so the two songs can be shaped independently.
+      this.mixIn = null;
+      this.mixLow = null;
+      this.mixMid = null;
+      this.mixHigh = null;
+      this.mixHp = null;
+      this.mixLp = null;
+      this.mixOut = null;
+      this.tailElement = null;
+      this.tailSource = null;
+      this.tailLow = null;
+      this.tailMid = null;
+      this.tailHigh = null;
+      this.tailHp = null;
+      this.tailLp = null;
+      this.tailGain = null;
+      this._mixTimer = null;
       this._analyserConnected = false;
       this._suspendTimer = null;
       this._attachedElement = null;
@@ -235,6 +253,34 @@
           }
 
           this.bus = this.ctx.createGain();
+          // Main (incoming) deck transition chain. Neutral by default, so the existing sound is untouched.
+          this.mixIn = this.ctx.createGain();
+          this.mixLow = this.ctx.createBiquadFilter();
+          this.mixLow.type = 'lowshelf';
+          this.mixLow.frequency.value = 120;
+          this.mixMid = this.ctx.createBiquadFilter();
+          this.mixMid.type = 'peaking';
+          this.mixMid.frequency.value = 1000;
+          this.mixMid.Q.value = 0.9;
+          this.mixHigh = this.ctx.createBiquadFilter();
+          this.mixHigh.type = 'highshelf';
+          this.mixHigh.frequency.value = 6000;
+          this.mixHp = this.ctx.createBiquadFilter();
+          this.mixHp.type = 'highpass';
+          this.mixHp.frequency.value = 20;
+          this.mixHp.Q.value = 0.7;
+          this.mixLp = this.ctx.createBiquadFilter();
+          this.mixLp.type = 'lowpass';
+          this.mixLp.frequency.value = 20000;
+          this.mixLp.Q.value = 0.7;
+          this.mixOut = this.ctx.createGain();
+          this.mixIn.connect(this.mixLow);
+          this.mixLow.connect(this.mixMid);
+          this.mixMid.connect(this.mixHigh);
+          this.mixHigh.connect(this.mixHp);
+          this.mixHp.connect(this.mixLp);
+          this.mixLp.connect(this.mixOut);
+
           this.fadeGain = this.ctx.createGain();
           this.fadeGain.gain.value = 1.0;
           this.masterGain.connect(this.normGain);
@@ -284,6 +330,7 @@
         this.stdInput.disconnect();
         this.hqLimiter.disconnect();
         this.bus.disconnect();
+        this.mixOut.disconnect();
         this.dryGain.disconnect();
         if (this.eqBands && this.eqBands.length) {
           this.eqBands[this.eqBands.length - 1].disconnect();
@@ -309,25 +356,28 @@
         inputNode.connect(this.bus);
       }
 
-      this.bus.connect(this.dryGain);
+      // All dry audio and effect sends pass through the main deck's transition chain. The outgoing tail
+      // has its own chain straight into masterGain, so Mix can EQ/filter the two decks independently.
+      this.bus.connect(this.mixIn);
+      this.mixOut.connect(this.dryGain);
       this.dryGain.connect(this.masterGain);
       // the level meter for "Normalize volume" listens on the bus: tapped off the EQ chain it heard nothing
       // while the EQ was flat (the default), so normalizing never kicked in
       if (this.levelAnalyser) this.bus.connect(this.levelAnalyser);
 
       if (isDistortionOn) {
-        this.bus.connect(this.distortionNode);
+        this.mixOut.connect(this.distortionNode);
         this.distortionNode.connect(this.distortionGain);
         this.distortionGain.connect(this.masterGain);
       }
 
       if (isEchoOn) {
-        this.bus.connect(this.delayNode);
+        this.mixOut.connect(this.delayNode);
         this.delayGain.connect(this.masterGain);
       }
 
       if (isReverbOn) {
-        this.bus.connect(this.convolverNode);
+        this.mixOut.connect(this.convolverNode);
         this.convolverNode.connect(this.reverbGain);
         this.reverbGain.connect(this.masterGain);
       }
@@ -550,6 +600,149 @@
       }
     }
 
+
+    _deck(kind) {
+      if (kind === 'tail') {
+        return { gain: this.tailGain, low: this.tailLow, mid: this.tailMid, high: this.tailHigh, hp: this.tailHp, lp: this.tailLp };
+      }
+      return { gain: this.mixOut, low: this.mixLow, mid: this.mixMid, high: this.mixHigh, hp: this.mixHp, lp: this.mixLp };
+    }
+
+    _setDeckValues(deck, values, when, duration, curve = 'equal') {
+      if (!deck || !deck.gain || !this.ctx || !values) return;
+      const end = when + Math.max(0.05, duration);
+      const set = (param, from, to, exponential = false) => {
+        if (!param) return;
+        try {
+          param.cancelScheduledValues(when);
+          param.setValueAtTime(exponential ? Math.max(0.001, from) : from, when);
+          if (exponential) param.exponentialRampToValueAtTime(Math.max(0.001, to), end);
+          else param.linearRampToValueAtTime(to, end);
+        } catch (e) {}
+      };
+      const volume = values.volume || [1, 1];
+      const from = Math.max(0.0001, Number(volume[0]) || 0);
+      const to = Math.max(0.0001, Number(volume[1]) || 0);
+      const fullFade = (from === 1 && to <= 0.0001) || (from <= 0.0001 && to === 1);
+      if (fullFade && duration >= 0.1 && curve !== 'linear') {
+        try {
+          const points = 64;
+          const samples = new Float32Array(points);
+          for (let i = 0; i < points; i++) {
+            const p = i / (points - 1);
+            let v;
+            if (curve === 'smooth') v = 1 - (p * p * (3 - 2 * p));
+            else v = Math.cos((p * Math.PI) / 2);
+            // the incoming deck uses the mirrored curve
+            if (from <= 0.0001 && to === 1) v = 1 - v;
+            samples[i] = Math.max(0.0001, v);
+          }
+          const param = deck.gain.gain;
+          param.cancelScheduledValues(when);
+          param.setValueAtTime(samples[0], when);
+          param.setValueCurveAtTime(samples, when, Math.max(0.1, duration));
+        } catch (e) {
+          set(deck.gain.gain, from, to);
+        }
+      } else {
+        set(deck.gain.gain, from, to);
+      }
+      const low = values.low || [0, 0];
+      const mid = values.mid || [0, 0];
+      const high = values.high || [0, 0];
+      set(deck.low && deck.low.gain, low[0], low[1]);
+      set(deck.mid && deck.mid.gain, mid[0], mid[1]);
+      set(deck.high && deck.high.gain, high[0], high[1]);
+      const hp = values.hp || [20, 20];
+      const lp = values.lp || [20000, 20000];
+      set(deck.hp && deck.hp.frequency, hp[0], hp[1], true);
+      set(deck.lp && deck.lp.frequency, lp[0], lp[1], true);
+    }
+
+    // The outgoing song's second player gets its own chain, created once for the element the app reuses.
+    ensureTailDeck(element) {
+      if (!this.ctx || !this.graphInitialized || !element) return null;
+      if (this.tailElement === element && this.tailGain) return this._deck('tail');
+      try { if (this.tailSource) this.tailSource.disconnect(); } catch (e) {}
+      let source;
+      try {
+        source = this.ctx.createMediaElementSource(element);
+      } catch (e) {
+        return null;
+      }
+      this.tailElement = element;
+      this.tailSource = source;
+      this.tailLow = this.ctx.createBiquadFilter();
+      this.tailLow.type = 'lowshelf';
+      this.tailLow.frequency.value = 120;
+      this.tailMid = this.ctx.createBiquadFilter();
+      this.tailMid.type = 'peaking';
+      this.tailMid.frequency.value = 1000;
+      this.tailMid.Q.value = 0.9;
+      this.tailHigh = this.ctx.createBiquadFilter();
+      this.tailHigh.type = 'highshelf';
+      this.tailHigh.frequency.value = 6000;
+      this.tailHp = this.ctx.createBiquadFilter();
+      this.tailHp.type = 'highpass';
+      this.tailHp.frequency.value = 20;
+      this.tailHp.Q.value = 0.7;
+      this.tailLp = this.ctx.createBiquadFilter();
+      this.tailLp.type = 'lowpass';
+      this.tailLp.frequency.value = 20000;
+      this.tailLp.Q.value = 0.7;
+      this.tailGain = this.ctx.createGain();
+      this.tailGain.gain.value = 0;
+      source.connect(this.tailLow);
+      this.tailLow.connect(this.tailMid);
+      this.tailMid.connect(this.tailHigh);
+      this.tailHigh.connect(this.tailHp);
+      this.tailHp.connect(this.tailLp);
+      this.tailLp.connect(this.tailGain);
+      this.tailGain.connect(this.masterGain);
+      return this._deck('tail');
+    }
+
+    resetMixChain() {
+      if (this._mixTimer) { clearTimeout(this._mixTimer); this._mixTimer = null; }
+      const main = this._deck('main');
+      if (main) {
+        this._setDeckValues(main, { volume: [1, 1], low: [0, 0], mid: [0, 0], high: [0, 0], hp: [20, 20], lp: [20000, 20000] }, this.ctx ? this.ctx.currentTime : 0, 0.05);
+      }
+      if (this.tailGain) {
+        try {
+          const now = this.ctx.currentTime;
+          this.tailGain.gain.cancelScheduledValues(now);
+          this.tailGain.gain.setValueAtTime(0, now);
+        } catch (e) {}
+      }
+    }
+
+    // Schedule both decks from the moment the incoming song actually starts. The tail must already be
+    // playing; the app keeps it at neutral until this runs.
+    startMixTransition(plan) {
+      if (!this.ctx || !this.graphInitialized || !plan || !plan.curves) return false;
+      if (!this.tailGain) return false;
+      const now = this.ctx.currentTime;
+      const duration = Math.max(0.5, Number(plan.wallDuration || plan.duration) || 0);
+      // The main deck starts silent while the tail is audible; do not reset it to 1 first.
+      this._setDeckValues(this._deck('main'), plan.curves.in, now, duration, plan.curve);
+      this._setDeckValues(this._deck('tail'), plan.curves.out, now, duration, plan.curve);
+      if (this._mixTimer) clearTimeout(this._mixTimer);
+      this._mixTimer = setTimeout(() => {
+        this._mixTimer = null;
+        this.resetMixChain();
+      }, (duration + 0.08) * 1000);
+      return true;
+    }
+
+    cancelMixTransition() {
+      this.resetMixChain();
+    }
+
+    mixReady() {
+      // The tail deck is created on demand by ensureTailDeck(); the graph only has to be able to host it.
+      return !!(this.ctx && this.graphInitialized && this.mixOut);
+    }
 
     getAnalyserNode() {
       return this.analyserNode;
