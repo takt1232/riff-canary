@@ -660,7 +660,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     _skipRecordedFor: null,
     isRightPanelOpen: false,
     drawerTab: 'now',
-    lyricsMode: 'line',
     uiScale: savedScale,
     activePresetId: soundPersistenceEnabled ? (localStorage.getItem('canary_active_preset') || 'p_default') : 'p_default',
     themeMode: localStorage.getItem('canary_theme_mode') || 'dark',
@@ -1820,7 +1819,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                           rightPanel: document.getElementById('right-panel'),
                           btnCloseRightPanel: document.getElementById('btn-close-right-panel'),
                           btnToggleLyricsPanel: document.getElementById('btn-toggle-lyrics-panel'),
-                          btnLyricsMode: document.getElementById('btn-lyrics-mode'),
                           coverContainer: document.getElementById('cover-container'),
                           rightPanelArtworkBox: document.getElementById('right-panel-artwork-box'),
                           rightPanelCover: document.getElementById('right-panel-cover'),
@@ -3172,10 +3170,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         cancelAnimationFrame(lyricsScrollRaf);
         lyricsScrollRaf = 0;
       }
-      if (typeof gradientRaf !== 'undefined' && gradientRaf) {
-        cancelAnimationFrame(gradientRaf);
-        gradientRaf = 0;
-      }
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
@@ -4348,7 +4342,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       state.forceLyricsScroll = true;
       state.forceSnapLyrics = true;
       if (el.nativeAudio) updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
-      if (!data.isCustom) fetchAndUpgradeWords(title, artist, token);
     } catch (e) {
       if (token === state.loadToken) {
         if (el.lyricsStatus) el.lyricsStatus.textContent = '';
@@ -4361,31 +4354,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  function getLyricsWordStyle() { return localStorage.getItem('canary_lyrics_word_style') === 'words' ? 'words' : 'gradient'; }
-  function isGradientMode() { return state.lyricsMode === 'word' && getAdv('karaoke_words', true) && getLyricsWordStyle() === 'gradient'; }
-
   function renderLyricsView() {
     if (!el.lyricsContainer) return;
     if (state.syncedLyrics.length === 0) return;
     el.lyricsContainer.innerHTML = '';
+    // line highlighting only dims synced lines; plain lyrics stay fully readable
+    el.lyricsContainer.classList.toggle('is-synced', state.syncedLyrics.some((l) => l.time >= 0));
 
     state.syncedLyrics.forEach((line, index) => {
       const div = document.createElement('div');
       div.className = 'lyric-line';
       div.id = `lyric-line-${index}`;
       if (isRtlText(line.text)) div.classList.add('rtl');
-
-      if (isGradientMode()) {
-        const fill = document.createElement('span');
-        fill.className = 'lyric-fill';
-        fill.textContent = line.text.replace(/<[^>]+>/g, '').trim();
-        div.classList.add('gradient-line');
-        div.appendChild(fill);
-      } else if (getAdv('karaoke_words', true) && state.lyricsMode === 'word') {
-        div.innerHTML = lyricWordSpans(line);
-      } else {
-        div.textContent = line.text;
-      }
+      div.textContent = line.text;
 
       if (state.trActive && state.currentTranslations && state.currentTranslations[index]) {
         const trDiv = document.createElement('div');
@@ -4687,16 +4668,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const speed = getLyricsSpeed();
     document.documentElement.style.setProperty('--lyric-duration', `${(0.45 / speed).toFixed(2)}s`);
   }
-  function getLyricsGradientTightness() {
-    const v = parseInt(localStorage.getItem('canary_lyrics_gradient_tightness') || localStorage.getItem('canary_gradient_tight'), 10);
-    return (v >= 0 && v <= 40) ? v : 2;
-  }
-  function applyLyricsGradientTightness() {
-    const span = getLyricsGradientTightness();
-    document.documentElement.style.setProperty('--lyric-gradient-span', `${span}%`);
-    document.documentElement.style.setProperty('--lyric-gradient-full', `${100 + span}%`);
-    document.documentElement.style.setProperty('--lyric-fw', `${span}%`);
-  }
   let lyricsScrollRaf = 0;
   function animateLyricsScroll(container, target) {
     cancelAnimationFrame(lyricsScrollRaf);
@@ -4716,126 +4687,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   if (el.lyricsContainer) ['wheel', 'touchstart', 'pointerdown'].forEach((ev) => el.lyricsContainer.addEventListener(ev, () => cancelAnimationFrame(lyricsScrollRaf), { passive: true }));
   applyLyricsEase();
-  applyLyricsGradientTightness();
-
-  const PUNCT_OR_SPACE_REGEX = /^[\s\p{P}]$/u;
-  const CJK_REGEX = /^[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]$/u;
-  const MARK_REGEX = /^\p{M}$/u;
-  const CYRILLIC_VOWELS = new Set('аеёиоуыэюяєіїўѣѵѫѧѩѭ');
-  const LATIN_VOWEL_EXTRA = new Set(['æ', 'ø', 'œ', 'ı']);
-
-  function getCharBaseWeight(c) {
-    if (PUNCT_OR_SPACE_REGEX.test(c)) return 0.4;
-    if (CJK_REGEX.test(c)) return 3.0;
-    if (MARK_REGEX.test(c)) return 3.0;
-    const lower = c.toLowerCase();
-    if (CYRILLIC_VOWELS.has(lower)) return 3.0;
-    const base = c.normalize('NFD')[0].toLowerCase();
-    if ('aeiouy'.includes(base) || LATIN_VOWEL_EXTRA.has(lower)) return 3.0;
-    return 1.0;
-  }
-
-  let gradientLineCache = {
-    lineEl: null,
-    lineIdx: -1,
-    text: '',
-    N: 0,
-    cumWeights: null,
-    totalWeight: 0
-  };
-
-  function getLineGradientWeights(lineEl, idx, text) {
-    if (gradientLineCache.lineEl === lineEl && gradientLineCache.lineIdx === idx && gradientLineCache.text === text) {
-      return gradientLineCache;
-    }
-    const chars = Array.from(text);
-    const N = chars.length;
-    if (N === 0) {
-      gradientLineCache = { lineEl, lineIdx: idx, text, N: 0, cumWeights: null, totalWeight: 0 };
-      return gradientLineCache;
-    }
-    const outroStart = Math.floor(N * 0.8);
-    const cumWeights = new Float64Array(N + 1);
-    cumWeights[0] = 0;
-    let total = 0;
-    for (let i = 0; i < N; i++) {
-      const baseW = getCharBaseWeight(chars[i]);
-      const w = (i >= outroStart) ? baseW * 1.6 : baseW;
-      total += w;
-      cumWeights[i + 1] = total;
-    }
-    gradientLineCache = {
-      lineEl,
-      lineIdx: idx,
-      text,
-      N,
-      cumWeights,
-      totalWeight: total
-    };
-    return gradientLineCache;
-  }
-
-  let gradientRaf = 0;
-  function updateActiveGradient() {
-    const lineEl = document.querySelector('.lyric-line.active.gradient-line');
-    if (!lineEl || !el.nativeAudio) return;
-    const fill = lineEl.firstElementChild;
-    if (!fill) return;
-
-    const idx = parseInt(lineEl.id.replace('lyric-line-', ''), 10);
-    const start = getLineStartTime(idx);
-    const dur = Math.max(0.5, getLineEndTime(idx) - start);
-    const t = el.nativeAudio.currentTime + (state.isCustomLyrics ? 0.25 : 0);
-    const tau = Math.min(1, Math.max(0, (t - start) / dur));
-
-    const text = fill.textContent || '';
-    const cache = getLineGradientWeights(lineEl, idx, text);
-    const timed = lineTimedWords(state.syncedLyrics[idx]);
-    const timedK = timed ? window.CanaryLyricsSources.timedProgress(timed, t) : null;
-
-    let k = tau;
-    if (timedK !== null) {
-      k = timedK;
-    } else if (cache.N > 0 && cache.totalWeight > 0) {
-      if (tau <= 0) {
-        k = 0;
-      } else if (tau >= 1) {
-        k = 1;
-      } else {
-        const tw = tau * cache.totalWeight;
-        const cw = cache.cumWeights;
-        const N = cache.N;
-        let low = 0, high = N - 1;
-        let i = 0;
-        while (low <= high) {
-          const mid = (low + high) >> 1;
-          if (cw[mid + 1] <= tw) {
-            low = mid + 1;
-          } else if (cw[mid] > tw) {
-            high = mid - 1;
-          } else {
-            i = mid;
-            break;
-          }
-        }
-        const charWeight = cw[i + 1] - cw[i];
-        const pi = charWeight > 0 ? (tw - cw[i]) / charWeight : 0;
-        k = Math.min(1, Math.max(0, (i + pi) / N));
-      }
-    }
-
-    fill.style.setProperty('--k', k.toFixed(4));
-  }
-  function startGradientLoop() {
-    if (gradientRaf) return;
-    const tick = () => {
-      gradientRaf = 0;
-      if (!state.isPlaying || !state.isWindowVisible || !isGradientMode()) return;
-      updateActiveGradient();
-      gradientRaf = requestAnimationFrame(tick);
-    };
-    gradientRaf = requestAnimationFrame(tick);
-  }
 
   function getLyricTargetScroll(activeEl, parent) {
     if (!activeEl || !parent) return 0;
@@ -4932,44 +4783,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     document.querySelectorAll('.lyric-line').forEach((lineEl, idx) => {
-      if (lineChanged) lineEl.style.setProperty('--dist', activeIndex >= 0 ? Math.abs(idx - activeIndex) : 0);
       if (idx === activeIndex) {
         if (!lineEl.classList.contains('active')) lineEl.classList.add('active');
-
-        if (isGradientMode()) {
-          updateActiveGradient();
-          startGradientLoop();
-        } else if (getAdv('karaoke_words', true) && state.lyricsMode === 'word') {
-          const currentLineTime = getLineStartTime(idx);
-          const nextLineTime = getLineEndTime(idx);
-          const lineDur = Math.max(0.5, nextLineTime - currentLineTime);
-          const progress = Math.min(Math.max((matchTime - currentLineTime) / lineDur, 0), 0.999);
-
-          const wordSpans = lineEl.querySelectorAll('.lyric-word');
-          const totalWords = wordSpans.length;
-          const timed = lineTimedWords(state.syncedLyrics[idx]);
-          const currentWordIndex = timed && timed.length === totalWords ? timedWordIndex(timed, matchTime) : Math.floor(progress * totalWords);
-
-          wordSpans.forEach((wSpan, wIdx) => {
-            if (wIdx < currentWordIndex) {
-              wSpan.className = 'lyric-word past-word';
-            } else if (wIdx === currentWordIndex) {
-              wSpan.className = 'lyric-word active-word';
-            } else {
-              wSpan.className = 'lyric-word';
-            }
-          });
-        }
       } else {
         lineEl.classList.remove('active');
-        if (lineEl.classList.contains('gradient-line')) {
-          lineEl.firstElementChild && lineEl.firstElementChild.style.setProperty('--k', '0');
-        }
-        if (!isGradientMode() && getAdv('karaoke_words', true) && state.lyricsMode === 'word') {
-          lineEl.querySelectorAll('.lyric-word').forEach(wSpan => {
-            wSpan.className = idx < activeIndex ? 'lyric-word past-word' : 'lyric-word';
-          });
-        }
       }
     });
     if (targetY !== null && parent) {
@@ -4980,32 +4797,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         animateLyricsScroll(parent, targetY);
       }
     }
-  }
-
-  function updateLyricsModeButton() {
-    if (!el.btnLyricsMode) return;
-    const isWordEnabled = getAdv('karaoke_words', true);
-    if (!isWordEnabled && state.lyricsMode === 'word') {
-      state.lyricsMode = 'line';
-    }
-    I18N.text(el.btnLyricsMode.querySelector('span'), state.lyricsMode === 'word' ? 'Word' : 'Line');
-  }
-
-  if (el.btnLyricsMode) {
-    updateLyricsModeButton();
-    el.btnLyricsMode.addEventListener('click', () => {
-      if (!getAdv('karaoke_words', true)) {
-        state.lyricsMode = 'line';
-        updateLyricsModeButton();
-        return;
-      }
-      state.lyricsMode = state.lyricsMode === 'line' ? 'word' : 'line';
-      updateLyricsModeButton();
-      renderLyricsView();
-      // word timings are only looked up for word-by-word karaoke
-      if (state.lyricsMode === 'word' && state.currentTrack && !state.isCustomLyrics) fetchAndUpgradeWords(state.currentTrack.title, state.currentTrack.artist, state.loadToken);
-      if (el.nativeAudio) updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
-    });
   }
 
   if (el.btnTranslateLyrics) {
@@ -12754,8 +12545,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           updateRightPanelBanner(getTrackThumbUrl(state.currentTrack));
         }
         if (state.isTvKaraokeOpen) syncTvBanner();
-      } else if (key === 'karaoke_words') {
-        renderLyricsView();
       }
     });
   });
@@ -14205,59 +13994,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       valLyricsSpeed.textContent = `${val.toFixed(1)}x`;
       localStorage.setItem('canary_lyrics_speed', val.toString());
       applyLyricsEase();
-    });
-  }
-
-  const lyricsWordStyleDropdown = document.getElementById('lyrics-wordstyle-dropdown');
-  const lyricsWordStyleTrigger = document.getElementById('lyrics-wordstyle-trigger');
-  const lyricsWordStyleLabel = document.getElementById('lyrics-wordstyle-label');
-  const lyricsWordStyleMenu = document.getElementById('lyrics-wordstyle-menu');
-
-  if (lyricsWordStyleDropdown && lyricsWordStyleTrigger && lyricsWordStyleMenu) {
-    const curStyle = getLyricsWordStyle();
-    lyricsWordStyleMenu.querySelectorAll('.m3-dropdown-option').forEach(opt => {
-      const isSel = opt.dataset.value === curStyle;
-      opt.classList.toggle('selected', isSel);
-      if (isSel && lyricsWordStyleLabel) lyricsWordStyleLabel.textContent = opt.textContent;
-    });
-
-    lyricsWordStyleTrigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      lyricsWordStyleDropdown.classList.toggle('open');
-    });
-
-    lyricsWordStyleMenu.querySelectorAll('.m3-dropdown-option').forEach(opt => {
-      opt.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const val = opt.dataset.value;
-        localStorage.setItem('canary_lyrics_word_style', val);
-        if (lyricsWordStyleLabel) lyricsWordStyleLabel.textContent = opt.textContent;
-        lyricsWordStyleMenu.querySelectorAll('.m3-dropdown-option').forEach(o => o.classList.toggle('selected', o === opt));
-        lyricsWordStyleDropdown.classList.remove('open');
-        renderLyricsView();
-        if (el.nativeAudio) updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
-      });
-    });
-
-    document.addEventListener('click', () => {
-      lyricsWordStyleDropdown.classList.remove('open');
-    });
-  }
-
-  const sliderLyricsTightness = document.getElementById('slider-lyrics-tightness');
-  const valLyricsTightness = document.getElementById('val-lyrics-tightness');
-  if (sliderLyricsTightness && valLyricsTightness) {
-    const currentTightness = getLyricsGradientTightness();
-    sliderLyricsTightness.value = currentTightness;
-    valLyricsTightness.textContent = `${currentTightness}%`;
-
-    sliderLyricsTightness.addEventListener('input', () => {
-      const val = parseInt(sliderLyricsTightness.value, 10);
-      valLyricsTightness.textContent = `${val}%`;
-      localStorage.setItem('canary_lyrics_gradient_tightness', val.toString());
-      localStorage.setItem('canary_gradient_tight', val.toString());
-      applyLyricsGradientTightness();
-      updateActiveGradient();
     });
   }
 
@@ -20991,14 +20727,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const lines = state.syncedLyrics || [];
     if (!lines.length) { box.innerHTML = '<div class="mini-lyrics-empty">No lyrics</div>'; return; }
     box.innerHTML = '';
-    const words = getAdv('karaoke_words', true) && state.lyricsMode === 'word';
     lines.forEach((line, index) => {
       const div = document.createElement('div');
       div.className = 'mini-lyric-line';
       div.id = `mini-lyric-line-${index}`;
       div.setAttribute('dir', 'auto');
-      if (words) div.innerHTML = lyricWordSpans(line);
-      else div.textContent = line.text || '';
+      div.textContent = line.text || '';
       if (line.time >= 0) div.addEventListener('click', () => { const t = getLineStartTime(index); if (el.nativeAudio && t >= 0) el.nativeAudio.currentTime = t; });
       box.appendChild(div);
     });
@@ -21017,10 +20751,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (active !== miniLyricsLastIdx) {
       const prev = box.querySelector('.mini-lyric-line.active');
-      if (prev) {
-        prev.classList.remove('active');
-        prev.querySelectorAll('.lyric-word').forEach((w) => { w.className = 'lyric-word past-word'; });
-      }
+      if (prev) prev.classList.remove('active');
       const cur = active >= 0 ? document.getElementById(`mini-lyric-line-${active}`) : null;
       if (cur) {
         cur.classList.add('active');
@@ -21029,19 +20760,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       miniLyricsLastIdx = active;
     }
-    if (active < 0) return;
-    const cur = document.getElementById(`mini-lyric-line-${active}`);
-    const spans = cur ? cur.querySelectorAll('.lyric-word') : [];
-    if (!spans.length) return;
-    const timed = lineTimedWords(lines[active]);
-    let idx;
-    if (timed && timed.length === spans.length) idx = timedWordIndex(timed, t);
-    else {
-      const start = getLineStartTime(active);
-      const p = Math.min(0.999, Math.max(0, (t - start) / Math.max(0.5, getLineEndTime(active) - start)));
-      idx = Math.floor(p * spans.length);
-    }
-    spans.forEach((w, i) => { w.className = i < idx ? 'lyric-word past-word' : i === idx ? 'lyric-word active-word' : 'lyric-word'; });
   }
   (function setupMiniLyrics() {
     const btn = document.getElementById('btn-mini-lyrics');
@@ -21357,77 +21075,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   })();
 
-  // ---- lyrics source (LRCLIB or Genius first) and word timings for word-by-word karaoke ----
+  // ---- lyrics source (LRCLIB or Genius first) ----
   function lyricsSourcePref() { return localStorage.getItem('canary_lyrics_source') === 'genius' ? 'genius' : 'lrclib'; }
-  var CJK_WORD = /[぀-ヿ㐀-䶿一-鿿가-힯]/;
-  // the words to show for a line, with their times when the line has them (null: no times)
-  function lineTimedWords(line) {
-    if (!line || !Array.isArray(line.words) || !line.words.length || !window.CanaryLyricsSources) return null;
-    if (line._timedFor !== line.words) {
-      line._timed = window.CanaryLyricsSources.timedWords(line.text, line.words);
-      line._timedFor = line.words;
-    }
-    return line._timed;
-  }
-  // the word being sung at time t: the first one that hasn't finished yet
-  function timedWordIndex(timed, t) {
-    for (let i = 0; i < timed.length; i++) if (t < timed[i].end) return i;
-    return timed.length;
-  }
-  function lyricWordSpans(line) {
-    const timed = lineTimedWords(line);
-    const words = timed ? timed.map((w) => w.text) : String(line.text || '').replace(/<[^>]+>/g, '').trim().split(/\s+/).filter(Boolean);
-    return words.map((w, i) => {
-      const sep = i === 0 || (CJK_WORD.test(w) && CJK_WORD.test(words[i - 1])) ? '' : ' ';
-      return `${sep}<span class="lyric-word" data-word-idx="${i}">${escapeHtml(w)}</span>`;
-    }).join('');
-  }
-  var wordsSessionCache = new Map();
-  async function fetchAndUpgradeWords(title, artist, token) {
-    const source = localStorage.getItem('canary_word_source') || 'auto';
-    const S = window.CanaryLyricsSources;
-    if (source === 'estimate' || !S || state.isCustomLyrics || !getAdv('online_lyrics', true)) return;
-    // only word-by-word karaoke uses them: no lookup for line mode
-    if (state.lyricsMode !== 'word' || !getAdv('karaoke_words', true)) return;
-    const lines = state.syncedLyrics;
-    if (!lines.length) return;
-    // "Auto" keeps word times the lyrics brought themselves
-    if (source === 'auto' && lines.some((l) => Array.isArray(l.words) && l.words.length)) return;
-    const dur = Math.round(Number(state.currentTrack && state.currentTrack.duration) || (el.nativeAudio && el.nativeAudio.duration) || 0);
-    const key = `${artist}\u0000${title}`;
-    let data = wordsSessionCache.get(key);
-    if (!data || (data.failed && Date.now() - data.at > 10 * 60 * 1000)) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/lyrics-words?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}${dur ? `&duration=${dur}` : ''}`);
-        const json = await res.json();
-        data = json && json.success && Array.isArray(json.lines) && json.lines.length ? { lines: json.lines } : { failed: true, at: Date.now() };
-      } catch (e) {
-        data = { failed: true, at: Date.now() };
-      }
-      wordsSessionCache.set(key, data);
-      if (wordsSessionCache.size > 100) wordsSessionCache.delete(wordsSessionCache.keys().next().value);
-    }
-    if (token !== state.loadToken || state.syncedLyrics !== lines || !data.lines) return;
-    if (lines.some((l) => l.time >= 0)) {
-      const aligned = S.alignWordTimings(lines, data.lines);
-      if (!aligned) return;
-      aligned.forEach((words, i) => { if (words) lines[i].words = words; });
-    } else {
-      // plain lyrics: NetEase's timed lines take their place, when they are the same lyrics
-      const ok = data.lines.filter((wl) => lines.some((l) => S.lineSimilarity(l.text, wl.text) >= 0.6)).length / data.lines.length >= 0.6;
-      if (!ok) return;
-      state.syncedLyrics = data.lines.map((l) => ({ time: l.start, text: l.text, words: l.words }));
-      window.dispatchEvent(new Event('canary:lyrics'));
-      if (el.lyricsStatus) el.lyricsStatus.textContent = 'Synced';
-      if (state.trActive) fetchAndApplyTranslation();
-    }
-    renderLyricsView();
-    renderMiniLyrics();
-    if (el.nativeAudio) updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
-  }
   var reloadLyrics = () => { if (state.currentTrack) loadSyncedLyrics(state.currentTrack.title, state.currentTrack.artist, state.loadToken); };
   wireSettingDropdown('lyrics-source', 'canary_lyrics_source', 'lrclib', reloadLyrics);
-  wireSettingDropdown('word-source', 'canary_word_source', 'auto', reloadLyrics);
 
   // ---- stream timeout: a song that has loaded nothing for this long is given up on ----
   (function setupStreamTimeout() {

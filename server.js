@@ -7007,7 +7007,7 @@ const server = http.createServer(guardHandler(async (req, res) => {
     return handleLyrics(req, res, title, artist, allowOnline, duration, source);
   }
 
-  // word timings for karaoke (Settings → Word-by-word source), lined up with the lyrics by app.js
+  // word timings for karaoke clients, lined up with the shown lyrics by the app
   if (parsedUrl.pathname === '/api/lyrics-words') {
     const title = parsedUrl.query.title || '';
     const artist = parsedUrl.query.artist || '';

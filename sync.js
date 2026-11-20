@@ -75,10 +75,10 @@
   // the look of the app; sizes, volume, folders and anything else that belongs to one device stay local
   const SETTINGS = ['canary_theme_mode', 'canary_theme_accent', 'canary_theme_intensity', 'canary_theme_brightness', 'canary_palette_style',
     'canary_mesh_brightness', 'canary_mesh_cfg', 'canary_font', 'canary_corner_radius', 'canary_glass_blur', 'canary_ui_alpha', 'canary_text_alpha',
-    'canary_cover_bg_brightness', 'devsize_vfx', 'canary_lyrics_word_style', 'canary_lyrics_ease', 'canary_lyrics_speed',
-    'canary_lyrics_gradient_tightness', 'canary_gradient_tight', 'canary_wavy_progress', 'canary_progress_knob', 'canary_progress_bg',
+    'canary_cover_bg_brightness', 'devsize_vfx', 'canary_lyrics_ease', 'canary_lyrics_speed',
+    'canary_wavy_progress', 'canary_progress_knob', 'canary_progress_bg',
     'canary_highlight_buttons', 'canary_track_art', 'canary_tr_enabled', 'canary_tr_lang', 'canary_tr_auto', 'canary_crossfade',
-    'canary_icon_pack', 'canary_adv_intensity_bg', 'canary_lyrics_source', 'canary_word_source', 'canary_track_trims',
+    'canary_icon_pack', 'canary_adv_intensity_bg', 'canary_lyrics_source', 'canary_track_trims',
     'canary_blocked_artists', 'canary_blocked_tracks'];
   const LISTENS_KEY = 'canary_listens_v1';
   const WATCH = new Map([...Object.entries(LISTS).map(([n, l]) => [l.key, n]), ...SETTINGS.map((k) => [k, 'settings']), [LISTENS_KEY, 'listens']]);

@@ -395,14 +395,10 @@ html.is-mobile #right-panel > :not(.np-ambient) { position: relative; z-index: 1
 html.is-mobile #right-panel .lyric-line {
   font-size: calc(25px * var(--font-scale, 1)) !important; font-weight: 800 !important; line-height: 1.22 !important; letter-spacing: -0.012em;
   text-align: left !important; padding: 9px 6px !important; transform-origin: left center !important;
-  color: var(--md-sys-color-on-surface) !important; filter: none !important;
-  opacity: max(.22, calc(.42 - var(--dist, 0) * .05)) !important;
-  transition: opacity .45s ease, transform .45s cubic-bezier(.2, .8, .2, 1) !important;
+  filter: none !important;
+  transition: color .45s ease, transform .45s cubic-bezier(.2, .8, .2, 1) !important;
 }
 html.is-mobile #right-panel .lyric-line.active { opacity: 1 !important; transform: scale(1.025) !important; background: transparent !important; }
-html.is-mobile #right-panel .lyric-line.active .lyric-word { color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent); transition: color .22s ease, text-shadow .22s ease; font-weight: 800; }
-html.is-mobile #right-panel .lyric-line.active .lyric-word.past-word { color: var(--md-sys-color-on-surface); }
-html.is-mobile #right-panel .lyric-line.active .lyric-word.active-word { color: var(--md-sys-color-on-surface); }
 
 /* ---------- touch: everything tappable is at least ~40px ---------- */
 html.is-mobile .track-row .btn-icon-pill { width: 40px !important; height: 40px !important; background: transparent !important; }
@@ -590,7 +586,6 @@ html.is-mobile .audio-panel[data-audio-panel="eq"] { display: none !important; }
   html.is-mobile .sidebar { border-top: 1px solid rgba(255, 255, 255, .08); }
   html.is-mobile .playbar::after { background: linear-gradient(90deg, var(--md-sys-color-primary) calc(var(--mini-progress, 0) * 100%), rgba(255, 255, 255, .12) 0); }
   html.is-mobile #right-panel::before { background: rgba(255, 255, 255, .3); }
-  html.is-mobile #right-panel .lyric-line.active .lyric-word { color: rgba(255, 255, 255, .38); }
 }
 
 /* ---------- Riff 43 player & look on phones ----------

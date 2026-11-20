@@ -1490,25 +1490,6 @@
                 </div>
               </div>
             </div>
-            <div class="setting-item" id="setting-word-source-row">
-              <div class="setting-item-top">
-                <div style="display: flex; flex-direction: column; gap: 2px;">
-                  <span class="setting-name">Word-by-word source</span>
-                  <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);">Source for karaoke word timings</span>
-                </div>
-              </div>
-              <div class="m3-dropdown" id="word-source-dropdown">
-                <button class="m3-dropdown-trigger" id="word-source-trigger" type="button">
-                  <span id="word-source-label">Auto</span>
-                  <svg class="m3-dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                </button>
-                <div class="m3-dropdown-menu" id="word-source-menu">
-                  <button class="m3-dropdown-option selected" data-value="auto" type="button">Auto</button>
-                  <button class="m3-dropdown-option" data-value="netease" type="button">NetEase</button>
-                  <button class="m3-dropdown-option" data-value="estimate" type="button">Estimate only</button>
-                </div>
-              </div>
-            </div>
             <div class="setting-item">
                     <div class="setting-item-top" style="align-items: center;">
                       <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -1591,41 +1572,6 @@
               </div>
               <input type="range" class="pill-range" id="slider-lyrics-speed" min="5" max="25" step="1" value="10">
               <div class="setting-hints"><span>0.5x (Slow)</span><span>1.0x (Normal)</span><span>2.5x (Fast)</span></div>
-            </div>
-            <div class="setting-item">
-                    <div class="setting-item-top" style="align-items: center;">
-                      <div style="display: flex; flex-direction: column; gap: 2px;">
-                        <span class="setting-name">Karaoke word highlighting</span>
-                        <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);">Highlight individual words in synchronized lyrics</span>
-                      </div>
-                      <button class="effect-switch-btn active" data-adv="karaoke_words"><span class="thumb"></span></button>
-                    </div>
-                  </div>
-            <div class="setting-item" id="setting-lyrics-wordstyle-row">
-              <div class="setting-item-top">
-                <div style="display: flex; flex-direction: column; gap: 2px;">
-                  <span class="setting-name">Word mode style</span>
-                  <span style="font-size: calc(12px * var(--font-scale, 1)); color: var(--md-sys-color-outline);">How the active line is highlighted in Word mode</span>
-                </div>
-              </div>
-              <div class="m3-dropdown" id="lyrics-wordstyle-dropdown">
-                <button class="m3-dropdown-trigger" id="lyrics-wordstyle-trigger" type="button">
-                  <span id="lyrics-wordstyle-label" data-i18n>Gradient</span>
-                  <svg class="m3-dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                </button>
-                <div class="m3-dropdown-menu" id="lyrics-wordstyle-menu">
-                  <button class="m3-dropdown-option selected" data-value="gradient" type="button">Gradient</button>
-                  <button class="m3-dropdown-option" data-value="words" type="button">Words</button>
-                </div>
-              </div>
-            </div>
-            <div class="setting-item" id="setting-lyrics-tightness-row">
-              <div class="setting-item-top">
-                <span class="setting-name">Gradient tightness</span>
-                <span class="setting-value" id="val-lyrics-tightness">2%</span>
-              </div>
-              <input type="range" class="pill-range" id="slider-lyrics-tightness" min="2" max="24" step="2" value="2">
-              <div class="setting-hints"><span>2% (Sharp)</span><span>Default</span><span>24% (Soft)</span></div>
             </div>
             <div class="setting-item">
                     <div class="setting-item-top" style="align-items: center;">
@@ -2082,9 +2028,6 @@
       <div class="drawer-pane" id="drawer-now">
       <div class="right-panel-header">
         <div class="right-panel-header-actions">
-          <button class="lyrics-mode-btn" id="btn-lyrics-mode" title="Toggle line mode">
-            <span data-i18n>Word</span>
-          </button>
         </div>
       </div>
 

@@ -2,6 +2,18 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.3.19 — 2026-11-20
+
+### Changed
+
+- Lyrics are line-by-line only. Synced lines that are not active now sit in gray and turn white
+  once they become the active line, on computers and phones alike.
+
+### Removed
+
+- Word-by-word karaoke and its settings: "Karaoke word highlighting", "Word mode style",
+  "Gradient tightness" and "Word-by-word source". Phones no longer switch to Word mode on launch.
+
 ## 1.3.18 — 2026-11-06
 
 ### Changed

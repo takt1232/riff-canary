@@ -117,15 +117,7 @@
   };
   if (window.CanaryCore) fixPickedMedia(); else window.addEventListener('canary:ready', fixPickedMedia, { once: true });
 
-  // phones default to word-by-word karaoke (the Line/Word button still switches)
-  const preferWordLyrics = () => {
-    const st = window.CanaryCore && window.CanaryCore.state;
-    const btn = document.getElementById('btn-lyrics-mode');
-    if (st && btn && st.lyricsMode === 'line' && localStorage.getItem('canary_adv_karaoke_words') !== 'false') btn.click();
-  };
-  if (window.CanaryCore) preferWordLyrics(); else window.addEventListener('canary:ready', preferWordLyrics, { once: true });
-
-  // lyrics tools (edit / sync / translate / fullscreen) move up next to the Line/Word button,
+  // lyrics tools (edit / sync / translate / fullscreen) move up next to the play controls,
   // so the lyrics get that row back; same buttons, so their handlers keep working
   const tools = panel.querySelector('.lyrics-header-actions');
   const topRow = panel.querySelector('.right-panel-header-actions');
