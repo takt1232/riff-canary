@@ -2,14 +2,9 @@ name: Website
 
 # Publishes site/ (the download page) to GitHub Pages.
 on:
-  push:
-    branches: [main]
-    paths: ['site/**', 'share-link.js', '.github/workflows/pages.yml']
+  # Manual only: deploy from the Actions tab when the site should be published. Normal commits to
+  # main no longer start a deploy (or send a failed-build notification).
   workflow_dispatch:
-  # the download counter: GitHub's API allows a visitor only 60 requests an hour, and people behind one address
-  # (phone networks, schools) share that, so the numbers are published with the site (site/stats.json) instead
-  schedule:
-    - cron: '*/10 * * * *'
 
 permissions:
   contents: read
