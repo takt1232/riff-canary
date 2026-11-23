@@ -2,6 +2,13 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Settings -> About now shows the exact installed build: version, build number and commit, on
+  computers and phones. The small tag at the bottom of Settings shows the version too.
+
 ## 1.3.19 — 2026-11-20
 
 ### Changed

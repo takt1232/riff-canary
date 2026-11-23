@@ -111,7 +111,9 @@ module.exports = function electronAPI({ ready, port, fs, fileUrlFor }) {
     setDownloadDir: async () => ({ success: false }),
     resetDownloadDir: async () => ({ success: true }),
     restartApp: () => location.reload(),
-    getAppVersion: async () => { const b = window.CANARY_BUILD || {}; return b.version ? `${b.version}${b.run ? ` (build ${b.run})` : ''}` : '1.1.2'; },
+    // The semantic version only: version-info.js adds the build number and commit from build-info.js.
+    // Empty when the bundle was not stamped, so About shows "Development build" instead of a stale number.
+    getAppVersion: async () => String((window.CANARY_BUILD && window.CANARY_BUILD.version) || ''),
     getHwAccel: async () => true,
     setHwAccel: noop,
     trimMemory: noop,

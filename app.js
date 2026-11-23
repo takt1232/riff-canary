@@ -14023,12 +14023,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  if (window.electronAPI && window.electronAPI.getAppVersion) {
-    window.electronAPI.getAppVersion().then((v) => {
-      const a = document.getElementById('about-version'); if (a) a.textContent = 'Version ' + v;
-      const t = document.querySelector('.settings-version-tag'); if (t) t.textContent = 'v' + v;
-    }).catch(() => {});
-  }
+  // Settings > About and the footer tag: the installed version, plus the build and commit when the
+  // build was stamped in CI (build-info.js). Phones have no main process, so their version comes from
+  // the same build-info.js (see mobile/electron-api.js). A local build has sha "dev": version only.
+  (function showInstalledVersion() {
+    const build = window.CANARY_BUILD || {};
+    const format = window.CanaryVersion && window.CanaryVersion.format;
+    const apply = (desktopVersion) => {
+      const info = format
+        ? format({ version: desktopVersion || build.version, run: build.run, sha: build.sha })
+        : { version: desktopVersion || build.version || '', detail: '', tag: desktopVersion || build.version ? `v${desktopVersion || build.version}` : 'dev' };
+      const about = document.getElementById('about-version');
+      const tag = document.querySelector('.settings-version-tag');
+      if (about) {
+        if (!info.version) I18N.text(about, 'Development build');
+        else I18N.text(about, 'Version {0}', info.detail ? `${info.version} \u00b7 ${info.detail}` : info.version);
+      }
+      if (tag) tag.textContent = info.tag;
+    };
+    if (window.electronAPI && typeof window.electronAPI.getAppVersion === 'function') {
+      window.electronAPI.getAppVersion().then(apply).catch(() => apply(''));
+    } else {
+      apply('');
+    }
+  })();
 
   function isTextInput(target) {
     if (!target) return false;
@@ -19528,7 +19546,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (typeof api.getDiagnostics === 'function') text = await api.getDiagnostics();
         else {
           // phones: no main process to ask, so the app's own details and its error log
-          text = [`Canary ${(window.CANARY_BUILD && window.CANARY_BUILD.version) || ''} (${(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform()) || 'web'})`,
+          const build = window.CANARY_BUILD || {};
+          const info = window.CanaryVersion ? window.CanaryVersion.format({ version: build.version, run: build.run, sha: build.sha }) : null;
+          const versionLine = info && info.version
+            ? `Canary ${info.version}${info.detail ? ` (${info.detail})` : ''}`
+            : 'Canary (development build)';
+          text = [`${versionLine} (${(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform()) || 'web'})`,
             navigator.userAgent, `Language ${navigator.language}`, '--- log ---', window.CanaryLog ? window.CanaryLog.text() : 'no log'].join('\n');
         }
       } catch (e) { text = `Diagnostics failed: ${e && e.message}`; }

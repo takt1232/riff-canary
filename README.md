@@ -87,6 +87,11 @@ node tools/bump-version.mjs major   # 1.3.11 -> 2.0.0
 
 It only edits files: it does not commit, tag or push. The same bump is available through `npm run release` (patch), `npm run release:minor` and `npm run release:major`.
 
+## Checking the installed version
+
+Settings -> About shows the installed version, build number and commit; the small tag at the bottom
+of Settings repeats the version. Local development builds show the version without build details.
+
 ## Data
 
 - Windows: `%LOCALAPPDATA%\Canary`

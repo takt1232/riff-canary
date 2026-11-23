@@ -11,7 +11,8 @@
       mkCanary = pkgs:
         pkgs.buildNpmPackage rec {
           pname = "canary";
-          version = "42.0.0";
+          # The same VERSION that package.json and the app use; stops the Nix package metadata drifting.
+          version = builtins.replaceStrings [ "\r" "\n" ] [ "" "" ] (builtins.readFile ./VERSION);
           src = self;
 
           npmDepsHash = "sha256-fptxs7GYEi3F9BTI6amByNVcX28QElIE6e0baFr4WzI=";

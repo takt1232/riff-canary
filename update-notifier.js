@@ -15,6 +15,11 @@
   const channel = build.channel || (window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : '');
   const tag = TAGS[channel];
   const enabled = !!(tag && build.sha && build.sha !== 'dev');
+  const isDev = !build.sha || build.sha === 'dev';
+  // The same line Settings > About shows, so the transferable version lives in one place.
+  const installed = window.CanaryVersion
+    ? window.CanaryVersion.format({ version: build.version, run: build.run, sha: build.sha })
+    : { version: build.version || '', about: build.version ? `Version ${build.version}` : 'Development build' };
 
   async function latestRelease() {
     const ctrl = new AbortController();
@@ -93,7 +98,7 @@
   let current = null;
 
   async function check(manual) {
-    if (!enabled) { if (manual) setStatus('Update checks run in the official builds'); return; }
+    if (!enabled) { if (manual) setStatus('Update checks are available on the Windows, Android and iPhone builds'); return; }
     const last = store.get('canary_update_last') || 0;
     if (!manual && Date.now() - last < CHECK_EVERY) {
       const cached = store.get('canary_update_found');
@@ -111,7 +116,7 @@
   }
 
   if (checkBtn) checkBtn.addEventListener('click', () => (current ? open(current.url) : check(true)));
-  if (statusEl) setStatus(enabled ? `${build.version ? `Canary ${build.version} · ` : ''}Build ${build.run || '?'} · ${String(build.sha).slice(0, 7)}` : 'Development build');
+  if (statusEl) setStatus(enabled || !isDev ? installed.about : installed.version ? `${installed.about} · development build` : 'Development build');
 
   // first check a little after start-up, then whenever the app comes back to the foreground
   setTimeout(() => check(false), 8000);
