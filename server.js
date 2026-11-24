@@ -299,16 +299,18 @@ function saveLibraryIndex() {
 const searchCache = new Map();
 const streamUrlCache = new Map();
 // Video links for the Now playing background loop. fastVideoCache is filled by the audio lookup above
-// (the same player response lists both); videoInfoCache holds the answers /api/video-info hands out,
-// keyed by video id and height cap. Signed googlevideo links expire, so neither outlives VIDEO_LINK_TTL.
+// (the same player response lists both); videoInfoCache holds the answers /api/video-info hands out.
+// Both are keyed by video id and height cap, so a fullscreen 1080p request is not answered with the
+// smaller background link. Signed googlevideo links expire, so neither outlives VIDEO_LINK_TTL.
 const fastVideoCache = new Map();
 const videoInfoCache = new Map();
 const VIDEO_LINK_TTL = 30 * 60 * 1000;
 const VIDEO_MISS_TTL = 10 * 60 * 1000;
-function rememberVideoCandidate(vid, video) {
+function rememberVideoCandidate(vid, video, cap = ytFast.VIDEO_MAX_HEIGHT) {
   if (!vid || !video || !video.url) return;
-  fastVideoCache.delete(vid);
-  fastVideoCache.set(vid, { timestamp: Date.now(), video });
+  const key = `${vid}:${cap}`;
+  fastVideoCache.delete(key);
+  fastVideoCache.set(key, { timestamp: Date.now(), video });
   while (fastVideoCache.size > 120) fastVideoCache.delete(fastVideoCache.keys().next().value);
 }
 const lyricsCache = new Map();
@@ -2725,13 +2727,14 @@ async function handleVideoInfo(req, res, videoUrl, videoIdParam, platform = 'you
   videoInfoCache.set(pendingKey, { promise: shared });
 
   let data = null;
+  const candidateKey = `${vid}:${cap}`;
   try {
-    let candidate = fastVideoCache.get(vid);
+    let candidate = fastVideoCache.get(candidateKey);
     if (!candidate || Date.now() - candidate.timestamp > VIDEO_LINK_TTL) {
       const fresh = await ytFast.lookupVideo(vid, cap).catch(() => null);
       if (fresh) {
-        rememberVideoCandidate(vid, fresh);
-        candidate = fastVideoCache.get(vid);
+        rememberVideoCandidate(vid, fresh, cap);
+        candidate = fastVideoCache.get(candidateKey);
       }
     }
     let video = candidate && candidate.video;
@@ -2746,11 +2749,11 @@ async function handleVideoInfo(req, res, videoUrl, videoIdParam, platform = 'you
         let ok = await ytFast.probe(video.url, video.headers);
         if (!ok && fromFast) {
           // the remembered fast link is dead: ask once more with a fresh player response
-          fastVideoCache.delete(vid);
+          fastVideoCache.delete(candidateKey);
           const fresh = await ytFast.lookupVideo(vid, cap).catch(() => null);
           if (fresh && fresh.kind !== 'art' && fresh.kind !== 'audio' && !fresh.live && await ytFast.probe(fresh.url, fresh.headers)) {
             video = fresh;
-            rememberVideoCandidate(vid, fresh);
+            rememberVideoCandidate(vid, fresh, cap);
             ok = true;
           }
         }

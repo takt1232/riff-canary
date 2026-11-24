@@ -1850,6 +1850,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                           tvKaraokeClose: document.getElementById('btn-close-tv-karaoke'),
                           tvKaraokeTitle: document.getElementById('tv-karaoke-title'),
                           tvKaraokeArtist: document.getElementById('tv-karaoke-artist'),
+                          tvkVideoLayer: document.getElementById('tvk-video-layer'),
+                          tvkVideo: document.getElementById('tvk-video'),
+                          tvkVideoBackdrop: document.getElementById('tvk-video-backdrop'),
+                          tvkVideoTitle: document.getElementById('tvk-video-title'),
+                          tvkVideoArtist: document.getElementById('tvk-video-artist'),
+                          tvkModeSwitch: document.getElementById('tvk-mode-switch'),
+                          btnTvkModeLyrics: document.getElementById('btn-tvk-mode-lyrics'),
+                          btnTvkModeVideo: document.getElementById('btn-tvk-mode-video'),
+                          tvkVideoBar: document.getElementById('tvk-video-bar'),
+                          tvkPlayback: document.getElementById('tvk-playback'),
                           btnTvkFav: document.getElementById('btn-tvk-fav'),
                           tvkFavIcon: document.getElementById('tvk-fav-icon'),
                           btnTvkShuffle: document.getElementById('btn-tvk-shuffle'),
@@ -3435,6 +3445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       && state.isPlaying
       && state.isRightPanelOpen
       && state.drawerTab === 'now'
+      && !state.isTvKaraokeOpen
       && !document.hidden
       && navigator.onLine !== false
       && !document.body.classList.contains('perf');
@@ -5347,6 +5358,246 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     syncTvBanner();
     syncTvLayout();
+    updateTvVideoMeta();
+    if (state.isTvKaraokeOpen && isNew) checkTvVideo();
+  }
+
+  // ---- Fullscreen video mode ----------------------------------------------------------------
+  // A second, optional presentation of the fullscreen karaoke view: the upload's video full-window,
+  // muted, synced to the song. The lyrics view is untouched; the switch only appears when the current
+  // upload has a video.
+  let tvVideoMode = 'lyrics';
+  let tvVideoInfo = null; // { id, video } for the current audio source
+  let tvVideoCheckToken = 0;
+  let tvVideoCheckingId = '';
+  let tvVideoAbort = null;
+  let tvVideoAttachedId = '';
+  let tvVideoSyncTimer = 0;
+  let tvVideoReadyTimer = 0;
+  let tvVideoStallTimer = 0;
+
+  function tvVideoAvailable() {
+    return !!(tvVideoInfo && tvVideoInfo.video && !isPhoneApp);
+  }
+
+  function updateTvVideoMeta() {
+    const track = state.currentTrack;
+    if (el.tvkVideoTitle) el.tvkVideoTitle.textContent = (track && track.title) || 'No track';
+    if (el.tvkVideoArtist) el.tvkVideoArtist.textContent = (track && track.artist) || '';
+    if (el.tvkVideoBackdrop) {
+      const thumb = track ? getTrackThumbUrl(track) : '';
+      el.tvkVideoBackdrop.style.backgroundImage = thumb ? `url("${String(thumb).replace(/"/g, '\\"')}")` : 'none';
+    }
+  }
+
+  function applyTvVideoUi() {
+    if (el.tvKaraoke) el.tvKaraoke.classList.toggle('tv-video-mode', tvVideoMode === 'video');
+    if (el.tvkVideoLayer) el.tvkVideoLayer.classList.toggle('hidden', tvVideoMode !== 'video');
+    if (el.tvkModeSwitch) {
+      const show = tvVideoMode === 'video' || tvVideoAvailable();
+      el.tvkModeSwitch.classList.toggle('hidden', !show);
+      if (el.btnTvkModeLyrics) {
+        el.btnTvkModeLyrics.classList.toggle('active', tvVideoMode !== 'video');
+        el.btnTvkModeLyrics.setAttribute('aria-pressed', tvVideoMode !== 'video' ? 'true' : 'false');
+      }
+      if (el.btnTvkModeVideo) {
+        el.btnTvkModeVideo.classList.toggle('active', tvVideoMode === 'video');
+        el.btnTvkModeVideo.setAttribute('aria-pressed', tvVideoMode === 'video' ? 'true' : 'false');
+      }
+    }
+    updateTvVideoMeta();
+  }
+
+  function detachTvVideo(clearSrc) {
+    if (tvVideoSyncTimer) { clearInterval(tvVideoSyncTimer); tvVideoSyncTimer = 0; }
+    if (tvVideoReadyTimer) { clearTimeout(tvVideoReadyTimer); tvVideoReadyTimer = 0; }
+    if (tvVideoStallTimer) { clearTimeout(tvVideoStallTimer); tvVideoStallTimer = 0; }
+    const v = el.tvkVideo;
+    if (v) {
+      v.oncanplay = null;
+      v.onerror = null;
+      v.onwaiting = null;
+      v.onplaying = null;
+      try { v.pause(); } catch (e) {}
+      if (clearSrc) {
+        try { v.removeAttribute('src'); v.load(); } catch (e) {}
+      }
+    }
+    tvVideoAttachedId = '';
+    if (el.tvKaraoke) el.tvKaraoke.classList.remove('tv-video-ready');
+  }
+
+  function moveTvPlayback(toVideo) {
+    const playback = el.tvkPlayback;
+    if (!playback) return;
+    const target = toVideo ? el.tvkVideoBar : document.querySelector('#tv-karaoke .tv-side');
+    if (target && playback.parentElement !== target) target.appendChild(playback);
+  }
+
+  function tvVideoFailed(message) {
+    setTvVideoMode('lyrics');
+    tvVideoInfo = null;
+    detachTvVideo(true);
+    applyTvVideoUi();
+    if (message) showToast(message, 'info');
+  }
+
+  function ensureTvVideo() {
+    if (tvVideoMode !== 'video' || !tvVideoAvailable() || !el.tvkVideo) return;
+    const info = tvVideoInfo;
+    const v = el.tvkVideo;
+    if (tvVideoAttachedId === info.id && v.currentSrc) { syncTvVideoClock(); return; }
+    detachTvVideo(true);
+    tvVideoAttachedId = info.id;
+    updateTvVideoMeta();
+    v.crossOrigin = 'anonymous';
+    v.muted = true;
+    v.defaultMuted = true;
+    v.volume = 0;
+    v.playbackRate = el.nativeAudio.playbackRate || 1;
+    let started = false;
+    const onReady = () => {
+      if (tvVideoAttachedId !== info.id || tvVideoMode !== 'video') return;
+      if (tvVideoReadyTimer) { clearTimeout(tvVideoReadyTimer); tvVideoReadyTimer = 0; }
+      if (!started) {
+        started = true;
+        try {
+          const at = el.nativeAudio.currentTime;
+          if (Number.isFinite(at) && at > 0.2) v.currentTime = at;
+        } catch (e) {}
+      }
+      v.playbackRate = el.nativeAudio.playbackRate || 1;
+      if (el.tvKaraoke) el.tvKaraoke.classList.add('tv-video-ready');
+      if (!el.nativeAudio.paused) v.play().catch(() => {});
+      syncTvVideoClock();
+    };
+    const onError = () => { if (tvVideoAttachedId === info.id && tvVideoMode === 'video') tvVideoFailed('Video unavailable for this song'); };
+    v.oncanplay = onReady;
+    v.onerror = onError;
+    v.onwaiting = () => {
+      if (tvVideoAttachedId !== info.id || tvVideoStallTimer) return;
+      tvVideoStallTimer = setTimeout(() => {
+        tvVideoStallTimer = 0;
+        if (tvVideoAttachedId === info.id && tvVideoMode === 'video' && !el.nativeAudio.paused) tvVideoFailed('Video unavailable for this song');
+      }, 8000);
+    };
+    v.onplaying = () => {
+      if (tvVideoStallTimer) { clearTimeout(tvVideoStallTimer); tvVideoStallTimer = 0; }
+    };
+    tvVideoReadyTimer = setTimeout(() => {
+      if (tvVideoAttachedId === info.id && tvVideoMode === 'video' && !el.tvKaraoke.classList.contains('tv-video-ready')) tvVideoFailed('Video unavailable for this song');
+    }, 8000);
+    v.preload = 'auto';
+    v.src = info.video.proxyUrl || info.video.url;
+    v.load();
+    tvVideoSyncTimer = setInterval(syncTvVideoClock, 500);
+  }
+
+  function syncTvVideoClock() {
+    const v = el.tvkVideo;
+    const a = el.nativeAudio;
+    if (!v || !a || tvVideoMode !== 'video' || !tvVideoAttachedId) return;
+    if (a.paused || a.ended) {
+      if (!v.paused) { try { v.pause(); } catch (e) {} }
+      return;
+    }
+    if (v.readyState < 2 || v.seeking) return;
+    if (v.ended) return; // keep the last frame; the song may outlast the video
+    if (v.paused) v.play().catch(() => {});
+    const plan = (window.CanaryNpVideo && window.CanaryNpVideo.driftPlan) ? window.CanaryNpVideo.driftPlan : null;
+    const rate = a.playbackRate || 1;
+    const p = plan ? plan(v.currentTime, a.currentTime) : { seek: false, rateScale: 1 };
+    if (p.seek) {
+      try { v.currentTime = a.currentTime; } catch (e) {}
+      try { v.playbackRate = rate; } catch (e) {}
+      return;
+    }
+    const target = rate * p.rateScale;
+    if (Math.abs(v.playbackRate - target) > 0.005) { try { v.playbackRate = target; } catch (e) {} }
+  }
+
+  function seekTvVideo() {
+    if (tvVideoMode !== 'video' || !tvVideoAttachedId || !el.tvkVideo || !el.nativeAudio) return;
+    try { el.tvkVideo.currentTime = el.nativeAudio.currentTime || 0; } catch (e) {}
+  }
+
+  function setTvVideoMode(mode) {
+    const next = mode === 'video' ? 'video' : 'lyrics';
+    if (next === 'video' && !tvVideoAvailable()) return;
+    tvVideoMode = next;
+    if (el.tvKaraoke) el.tvKaraoke.classList.toggle('tv-video-mode', next === 'video');
+    const panel = document.getElementById('tvk-panel');
+    if (panel) panel.classList.remove('open');
+    const settings = document.getElementById('btn-tvk-settings');
+    if (settings) settings.classList.remove('open');
+    if (next === 'video') {
+      moveTvPlayback(true);
+      applyTvVideoUi();
+      updateTvVideoMeta();
+      ensureTvVideo();
+      resetTvIdleTimer();
+    } else {
+      detachTvVideo(false);
+      moveTvPlayback(false);
+      applyTvVideoUi();
+      if (el.tvKaraoke) el.tvKaraoke.classList.remove('tv-video-mode');
+      if (typeof resizeCanvases === 'function') requestAnimationFrame(resizeCanvases);
+      syncTvLayout();
+      if (el.nativeAudio) {
+        state.forceSnapLyrics = true;
+        state.forceLyricsScroll = true;
+        updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
+      }
+      resetTvIdleTimer();
+    }
+  }
+
+  async function checkTvVideo() {
+    if (!state.isTvKaraokeOpen || !el.tvkVideo || isPhoneApp) { tvVideoInfo = null; applyTvVideoUi(); return; }
+    const src = npVideoSource();
+    const token = ++tvVideoCheckToken;
+    if (!src || navigator.onLine === false) {
+      tvVideoInfo = null;
+      if (tvVideoMode === 'video') setTvVideoMode('lyrics');
+      applyTvVideoUi();
+      return;
+    }
+    if (tvVideoInfo && tvVideoInfo.id === src.id) {
+      applyTvVideoUi();
+      if (tvVideoMode === 'video') ensureTvVideo();
+      return;
+    }
+    if (tvVideoAbort && tvVideoCheckingId === src.id) return;
+    tvVideoCheckingId = src.id;
+    detachTvVideo(true);
+    tvVideoInfo = null;
+    applyTvVideoUi();
+    if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} }
+    const controller = new AbortController();
+    tvVideoAbort = controller;
+    const timer = setTimeout(() => { try { controller.abort(); } catch (e) {} }, 12000);
+    let payload = null;
+    try {
+      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=1080`;
+      const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/video-info?${q}`, { signal: controller.signal });
+      payload = await res.json();
+    } catch (e) {
+      // timeout, abort or offline: no video switch
+    } finally {
+      clearTimeout(timer);
+    }
+    if (token !== tvVideoCheckToken) return;
+    if (tvVideoAbort === controller) tvVideoAbort = null;
+    if (tvVideoCheckingId === src.id) tvVideoCheckingId = '';
+    tvVideoInfo = payload && payload.success && payload.video
+      ? { id: src.id, video: payload.video }
+      : { id: src.id, video: null };
+    if (!tvVideoInfo.video && tvVideoMode === 'video') {
+      setTvVideoMode('lyrics');
+    } else {
+      applyTvVideoUi();
+      if (tvVideoMode === 'video') ensureTvVideo();
+    }
   }
 
   let tvkOutputInterval = null;
@@ -5438,6 +5689,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!el.tvKaraoke || !el.lyricsContainer) return;
     if (state.isTvKaraokeOpen) return;
     state.isTvKaraokeOpen = true;
+    stopNpVideo();
+    tvVideoMode = 'lyrics';
+    tvVideoInfo = null;
+    tvVideoCheckToken++;
+    if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
+    tvVideoCheckingId = '';
+    detachTvVideo(true);
+    moveTvPlayback(false);
+    applyTvVideoUi();
     if (!animationFrameId) { hasDrawnPausedFrame = false; startVisualizers(); }
 
     lyricsContainerParent = el.lyricsContainer.parentElement;
@@ -5452,6 +5712,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       el.lyricsContainer.scrollTop = 0;
     }
     updateTvKaraokeMeta();
+    checkTvVideo();
     syncTvBanner();
     syncTvLayout();
     el.tvKaraoke.classList.remove('hidden');
@@ -5494,6 +5755,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   function closeTvKaraoke() {
     if (!state.isTvKaraokeOpen || !el.tvKaraoke) return;
     state.isTvKaraokeOpen = false;
+    tvVideoCheckToken++;
+    if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
+    tvVideoCheckingId = '';
+    setTvVideoMode('lyrics');
+    tvVideoInfo = null;
+    detachTvVideo(true);
+    tvVideoMode = 'lyrics';
+    applyTvVideoUi();
     clearTimeout(tvIdleTimer);
     if (tvkOutputInterval) {
       clearInterval(tvkOutputInterval);
@@ -5539,6 +5808,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(syncSidebarLyrics, 50);
     setTimeout(syncSidebarLyrics, 150);
     setTimeout(syncSidebarLyrics, 300);
+    syncNowPlayingVideo();
   }
 
   window.openTvKaraoke = openTvKaraoke;
@@ -5550,6 +5820,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (el.tvKaraokeClose) {
     el.tvKaraokeClose.addEventListener('click', closeTvKaraoke);
   }
+  if (el.btnTvkModeLyrics) el.btnTvkModeLyrics.addEventListener('click', () => setTvVideoMode('lyrics'));
+  if (el.btnTvkModeVideo) el.btnTvkModeVideo.addEventListener('click', () => setTvVideoMode('video'));
   if (el.tvKaraoke) {
     el.tvKaraoke.addEventListener('mousemove', resetTvIdleTimer);
   }
@@ -6692,6 +6964,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.nativeAudio.addEventListener('waiting', () => {
       updatePlayPauseButton(state.isPlaying, true);
       if (el.npVideoBgVideo && !el.npVideoBgVideo.paused) { try { el.npVideoBgVideo.pause(); } catch (e) {} }
+      if (el.tvkVideo && !el.tvkVideo.paused) { try { el.tvkVideo.pause(); } catch (e) {} }
       if (!el.nativeAudio.paused) watchStall();
     });
     el.nativeAudio.addEventListener('stalled', () => { if (!el.nativeAudio.paused) watchStall(); });
@@ -6787,6 +7060,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateMediaSession();
       if (typeof m3cStart === 'function') m3cStart();
       syncNowPlayingVideo();
+      if (state.isTvKaraokeOpen) {
+        checkTvVideo();
+        syncTvVideoClock();
+      }
     });
 
     el.nativeAudio.addEventListener('pause', () => {
@@ -6809,6 +7086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (audioEngine.setAnalyserEnabled) audioEngine.setAnalyserEnabled(false);
       }
       if (el.npVideoBgVideo && !el.npVideoBgVideo.paused) { try { el.npVideoBgVideo.pause(); } catch (e) {} }
+      if (el.tvkVideo && !el.tvkVideo.paused) { try { el.tvkVideo.pause(); } catch (e) {} }
       if (typeof applyM3Cover === 'function') applyM3Cover();
     });
 
@@ -6898,6 +7176,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       state.lastActiveLyricIdx = -1;
       if (state.isRightPanelOpen || state.isTvKaraokeOpen) {
         updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
+      }
+      seekTvVideo();
+    });
+
+    el.nativeAudio.addEventListener('ratechange', () => {
+      if (tvVideoMode === 'video' && el.tvkVideo) {
+        try { el.tvkVideo.playbackRate = el.nativeAudio.playbackRate || 1; } catch (e) {}
       }
     });
 

@@ -3345,6 +3345,24 @@
       <div class="tv-bg-layer active" id="tv-bg-layer-a"></div>
       <div class="tv-bg-layer" id="tv-bg-layer-b"></div>
     </div>
+    <div class="tvk-video-layer hidden" id="tvk-video-layer">
+
+      <div class="tvk-video-backdrop" id="tvk-video-backdrop"></div>
+      <video class="tvk-video" id="tvk-video" muted playsinline preload="none" crossorigin="anonymous" disablepictureinpicture aria-hidden="true" tabindex="-1"></video>
+      <div class="tvk-video-scrim"></div>
+      <div class="tvk-video-meta" id="tvk-video-meta">
+        <div class="tvk-video-title" id="tvk-video-title"></div>
+        <div class="tvk-video-artist" id="tvk-video-artist"></div>
+      </div>
+    </div>
+    <div class="tvk-mode-switch hidden" id="tvk-mode-switch" role="group" aria-label="Fullscreen mode">
+      <button class="tvk-mode-opt active" id="btn-tvk-mode-lyrics" type="button" title="Lyrics" aria-label="Lyrics" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"></line><line x1="4" y1="12" x2="16" y2="12"></line><line x1="4" y1="17" x2="13" y2="17"></line></svg>
+      </button>
+      <button class="tvk-mode-opt" id="btn-tvk-mode-video" type="button" title="Video" aria-label="Video" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"></path></svg>
+      </button>
+    </div>
     <button class="tv-karaoke-close" id="btn-tvk-settings" title="Customize lyrics" aria-label="Customize lyrics">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
@@ -3499,6 +3517,7 @@
             <span id="tvk-battery-pct">100%</span>
           </div>
         </div>
+        <div class="tvk-playback" id="tvk-playback">
         <div class="tvk-controls" id="tvk-controls">
           <button class="control-btn" id="btn-tvk-prev" title="Previous" aria-label="Previous">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5"></line></svg>
@@ -3534,9 +3553,11 @@
           <input type="range" class="pill-range" id="tvk-seek-slider" min="0" max="1000" step="1" value="0" aria-label="Seek">
           <span class="time-label" id="tvk-time-duration">0:00</span>
         </div>
+        </div>
       </div>
       <div class="tv-karaoke-content" id="tv-karaoke-content"></div>
     </div>
+    <div class="tvk-video-bar" id="tvk-video-bar"></div>
     <div class="tvk-visualizer" id="tvk-visualizer">
       <canvas id="tvk-visualizer-canvas"></canvas>
     </div>
