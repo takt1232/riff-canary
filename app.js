@@ -645,6 +645,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     queueIndex: -1,
     queueHistory: [],
     currentTrack: null,
+    // the exact upload the audio came from (sourceUrl/sourceId/sourcePlatform from /api/stream-info),
+    // so the background video uses that same video and never a different upload
+    currentStreamSource: null,
     currentTrackContext: null,
     currentTrackIndexInContext: -1,
     isPlaying: false,
@@ -1823,6 +1826,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                           rightPanelArtworkBox: document.getElementById('right-panel-artwork-box'),
                           rightPanelCover: document.getElementById('right-panel-cover'),
                           rightPanelFallback: document.getElementById('right-panel-fallback'),
+                          npVideoBg: document.getElementById('np-video-bg'),
+                          npVideoBgVideo: document.getElementById('np-video-bg-video'),
+                          npVideoBgFallback: document.getElementById('np-video-bg-fallback'),
+                          npVideoSwitch: document.getElementById('np-video-switch'),
+                          btnNpVideoCover: document.getElementById('btn-np-video-cover'),
+                          btnNpVideoBackground: document.getElementById('btn-np-video-background'),
                           rightPanelTitle: document.getElementById('right-panel-title'),
                           rightPanelDownloaded: document.getElementById('right-panel-downloaded'),
                           rightPanelArtist: document.getElementById('right-panel-artist'),
@@ -3378,6 +3387,280 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // ---- Now playing video background (desktop) -------------------------------------------------
+  // The drawer can play the upload's video as a muted looping background. The audio element stays
+  // the clock for the song; the loop follows play/pause but is independent of the song position, like
+  // a Spotify Canvas. Only the exact upload that supplied the audio is used (same source), and only
+  // while the drawer is open on "Now playing" and the window is visible.
+  const npVideo = {
+    token: 0,
+    syncTimer: 0,
+    readyTimer: 0,
+    stallTimer: 0,
+    attachedId: '',
+    pendingId: '',
+    blocked: new Map(), // id -> do not ask again before this time
+    abort: null,
+    loopStart: 0,
+    loopEnd: 0,
+  };
+
+  function npVideoEnabled() {
+    return !isPhoneApp && getAdv('np_video', true);
+  }
+
+  function npVideoSource() {
+    const s = state.currentStreamSource;
+    const track = state.currentTrack;
+    let url = s ? s.url : '';
+    let id = s ? s.id : '';
+    let platform = s ? s.platform : '';
+    if (!platform && track) {
+      platform = track.platform;
+      url = track.url;
+      id = track.id;
+    }
+    if (platform !== 'youtube' && platform !== 'ytmusic') return null;
+    if (!id) {
+      const m = String(url || '').match(/(?:v=|youtu\.be\/|\/shorts\/|^)([\w-]{11})(?:[&?#]|$)/);
+      if (m) id = m[1];
+    }
+    if (!/^[\w-]{11}$/.test(String(id || ''))) return null;
+    return { id: id, url: url || '', platform: platform };
+  }
+
+  function npVideoCanRun() {
+    return npVideoEnabled()
+      && !!npVideoSource()
+      && state.isPlaying
+      && state.isRightPanelOpen
+      && state.drawerTab === 'now'
+      && !document.hidden
+      && navigator.onLine !== false
+      && !document.body.classList.contains('perf');
+  }
+
+  function npVideoLoopWindow(v) {
+    const win = (window.CanaryNpVideo && window.CanaryNpVideo.loopWindow)
+      ? window.CanaryNpVideo.loopWindow(v.duration, 8, 0.25)
+      : { start: 0, end: 8 };
+    npVideo.loopStart = win.start;
+    npVideo.loopEnd = win.end;
+  }
+
+  function stopNpVideo() {
+    const shown = el.npVideoBg && !el.npVideoBg.classList.contains('hidden');
+    if (!npVideo.attachedId && !npVideo.pendingId && !npVideo.abort && !npVideo.syncTimer && !shown) return;
+    npVideo.token++;
+    npVideo.pendingId = '';
+    if (npVideo.abort) { try { npVideo.abort.abort(); } catch (e) {} npVideo.abort = null; }
+    if (npVideo.syncTimer) { clearInterval(npVideo.syncTimer); npVideo.syncTimer = 0; }
+    if (npVideo.readyTimer) { clearTimeout(npVideo.readyTimer); npVideo.readyTimer = 0; }
+    if (npVideo.stallTimer) { clearTimeout(npVideo.stallTimer); npVideo.stallTimer = 0; }
+    const v = el.npVideoBgVideo;
+    if (v) {
+      v.oncanplay = null;
+      v.onerror = null;
+      v.onwaiting = null;
+      v.onplaying = null;
+      v.ontimeupdate = null;
+      v.__npToken = 0;
+      try { v.pause(); } catch (e) {}
+      try { v.removeAttribute('src'); v.load(); } catch (e) {}
+    }
+    npVideo.attachedId = '';
+    npVideo.loopStart = 0;
+    npVideo.loopEnd = 0;
+    if (el.npVideoBg) {
+      el.npVideoBg.classList.add('hidden');
+      el.npVideoBg.classList.remove('ready');
+    }
+    if (el.rightPanel) el.rightPanel.classList.remove('has-video-bg');
+  }
+
+  function syncNowPlayingVideo() {
+    if (!npVideoCanRun()) { stopNpVideo(); return; }
+    const src = npVideoSource();
+    if (!src) { stopNpVideo(); return; }
+    if (npVideo.attachedId === src.id) {
+      syncNpVideoClock();
+      return;
+    }
+    if (npVideo.pendingId === src.id) return;
+    const blockedUntil = npVideo.blocked.get(src.id) || 0;
+    if (blockedUntil > Date.now()) { stopNpVideo(); return; }
+    npVideo.blocked.delete(src.id);
+    attachNpVideo(src);
+  }
+
+  function failNpVideo(id) {
+    if (id) npVideo.blocked.set(id, Date.now() + 90 * 1000);
+    stopNpVideo();
+  }
+
+  async function attachNpVideo(src) {
+    const v = el.npVideoBgVideo;
+    const layer = el.npVideoBg;
+    if (!v || !layer) return;
+    npVideo.pendingId = src.id;
+    const token = ++npVideo.token;
+    if (npVideo.abort) { try { npVideo.abort.abort(); } catch (e) {} }
+    const controller = new AbortController();
+    npVideo.abort = controller;
+    if (npVideo.syncTimer) { clearInterval(npVideo.syncTimer); npVideo.syncTimer = 0; }
+    if (npVideo.readyTimer) { clearTimeout(npVideo.readyTimer); npVideo.readyTimer = 0; }
+    if (npVideo.stallTimer) { clearTimeout(npVideo.stallTimer); npVideo.stallTimer = 0; }
+    v.oncanplay = null;
+    v.onerror = null;
+    v.onwaiting = null;
+    v.onplaying = null;
+    v.ontimeupdate = null;
+    try { v.pause(); } catch (e) {}
+
+    // the cover is the blurred backdrop until the first video frame is ready
+    const coverSrc = (el.rightPanelCover && el.rightPanelCover.src) || (state.currentTrack ? getTrackThumbUrl(state.currentTrack) : '') || '';
+    if (el.npVideoBgFallback) {
+      if (coverSrc) el.npVideoBgFallback.src = coverSrc;
+      else el.npVideoBgFallback.removeAttribute('src');
+    }
+
+    let payload = null;
+    const abortTimer = setTimeout(() => { try { controller.abort(); } catch (e) {} }, 12000);
+    try {
+      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=480`;
+      const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/video-info?${q}`, { signal: controller.signal });
+      payload = await res.json();
+    } catch (e) {
+      // timeout, abort or offline: stay on the cover
+    } finally {
+      clearTimeout(abortTimer);
+    }
+    if (token !== npVideo.token) return;
+    if (npVideo.abort === controller) npVideo.abort = null;
+    if (npVideo.pendingId === src.id) npVideo.pendingId = '';
+    if (!payload || !payload.success || !payload.video) {
+      const reason = payload && payload.reason;
+      const wait = (reason === 'art' || reason === 'audio' || reason === 'source') ? 24 * 60 * 60 * 1000 : 90 * 1000;
+      npVideo.blocked.set(src.id, Date.now() + wait);
+      stopNpVideo();
+      return;
+    }
+
+    npVideo.attachedId = src.id;
+    v.crossOrigin = 'anonymous';
+    v.muted = true;
+    v.defaultMuted = true;
+    v.volume = 0;
+    v.playbackRate = 1;
+
+    let started = false;
+    v.__npToken = token;
+    const onReady = () => {
+      if (token !== npVideo.token || v.__npToken !== token) return;
+      if (npVideo.readyTimer) { clearTimeout(npVideo.readyTimer); npVideo.readyTimer = 0; }
+      if (!started) {
+        started = true;
+        npVideoLoopWindow(v);
+        v.loop = false;
+        v.ontimeupdate = () => {
+          if (v.__npToken !== token || !npVideo.attachedId) return;
+          if (npVideo.loopEnd > npVideo.loopStart && v.currentTime >= npVideo.loopEnd) {
+            try { v.currentTime = npVideo.loopStart; } catch (e) {}
+          }
+        };
+        try { v.currentTime = npVideo.loopStart; } catch (e) {}
+      }
+      v.playbackRate = 1;
+      layer.classList.add('ready');
+      if (!el.nativeAudio.paused) v.play().catch(() => {});
+      syncNpVideoClock();
+    };
+    const onError = () => {
+      if (token !== npVideo.token || v.__npToken !== token) return;
+      if (npVideo.readyTimer) { clearTimeout(npVideo.readyTimer); npVideo.readyTimer = 0; }
+      failNpVideo(src.id);
+    };
+    v.onwaiting = () => {
+      if (token !== npVideo.token || v.__npToken !== token || npVideo.stallTimer) return;
+      npVideo.stallTimer = setTimeout(() => {
+        npVideo.stallTimer = 0;
+        if (token === npVideo.token && npVideo.attachedId === src.id && !el.nativeAudio.paused) failNpVideo(src.id);
+      }, 8000);
+    };
+    v.onplaying = () => {
+      if (token !== npVideo.token || v.__npToken !== token) return;
+      if (npVideo.stallTimer) { clearTimeout(npVideo.stallTimer); npVideo.stallTimer = 0; }
+    };
+    v.oncanplay = onReady;
+    v.onerror = onError;
+    if (npVideo.readyTimer) clearTimeout(npVideo.readyTimer);
+    npVideo.readyTimer = setTimeout(() => { if (token === npVideo.token && npVideo.attachedId === src.id && !layer.classList.contains('ready')) failNpVideo(src.id); }, 8000);
+
+    v.preload = 'auto';
+    v.src = payload.video.proxyUrl || payload.video.url;
+    v.load();
+
+    layer.classList.remove('hidden');
+    if (el.rightPanel) el.rightPanel.classList.add('has-video-bg');
+    npVideo.syncTimer = setInterval(syncNpVideoClock, 500);
+  }
+
+  function syncNpVideoClock() {
+    const v = el.npVideoBgVideo;
+    const a = el.nativeAudio;
+    if (!v || !a || !npVideo.attachedId) return;
+    if (a.paused || a.ended) {
+      if (!v.paused) { try { v.pause(); } catch (e) {} }
+      return;
+    }
+    if (v.readyState < 2 || v.seeking) return;
+    if (v.ended) {
+      try { v.currentTime = npVideo.loopStart; } catch (e) {}
+      v.play().catch(() => {});
+      return;
+    }
+    if (v.paused) v.play().catch(() => {});
+    if (Math.abs(v.playbackRate - 1) > 0.005) { try { v.playbackRate = 1; } catch (e) {} }
+    if (npVideo.loopEnd > npVideo.loopStart && v.currentTime >= npVideo.loopEnd) {
+      try { v.currentTime = npVideo.loopStart; } catch (e) {}
+    }
+  }
+
+  function applyNpVideoPreference() {
+    const on = npVideoEnabled();
+    if (el.npVideoSwitch) el.npVideoSwitch.hidden = isPhoneApp;
+    if (el.btnNpVideoCover) {
+      el.btnNpVideoCover.classList.toggle('active', !on);
+      el.btnNpVideoCover.setAttribute('aria-pressed', !on ? 'true' : 'false');
+    }
+    if (el.btnNpVideoBackground) {
+      el.btnNpVideoBackground.classList.toggle('active', on);
+      el.btnNpVideoBackground.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    document.querySelectorAll('.effect-switch-btn[data-adv="np_video"]').forEach((b) => b.classList.toggle('active', on));
+    const row = document.getElementById('setting-np-video-row');
+    if (row) row.hidden = isPhoneApp;
+    syncNowPlayingVideo();
+  }
+
+  function setNpVideoEnabled(on) {
+    if (isPhoneApp) return;
+    setAdv('np_video', !!on);
+    npVideo.blocked.clear();
+    applyNpVideoPreference();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopNpVideo();
+    else syncNowPlayingVideo();
+  });
+  if (window.electronAPI && window.electronAPI.onWindowVisibility) {
+    window.electronAPI.onWindowVisibility((visible) => {
+      if (!visible) stopNpVideo();
+      else syncNowPlayingVideo();
+    });
+  }
+
   function updateNowPlayingUI(track) {
     window.dispatchEvent(new CustomEvent('canary:track', { detail: track }));
     if (el.playbarTitle) el.playbarTitle.textContent = track.title || 'Untitled';
@@ -3452,6 +3735,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateThemeFromState();
     updateMediaSession();
     if (state.isTvKaraokeOpen) updateTvKaraokeMeta();
+    syncNowPlayingVideo();
   }
 
   function updateRightPanelBanner(thumbUrl) {
@@ -3907,6 +4191,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     state.isPlaying = false;
+    state.currentStreamSource = null;
+    stopNpVideo();
     updatePlayPauseButton(false, true);
     sendStateToServer();
 
@@ -4046,6 +4332,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       throw new Error((data && data.error) || 'Failed to extract audio stream');
     }
+
+    // the exact upload behind this audio; the background video must be the same one
+    state.currentStreamSource = {
+      url: data.sourceUrl || resolvedUrl || track.url || '',
+      id: data.sourceId || resolvedId || track.id || '',
+      platform: data.sourcePlatform || track.platform || state.platform || 'youtube'
+    };
 
     if (hlsInstance) {
       hlsInstance.destroy();
@@ -6398,6 +6691,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     el.nativeAudio.addEventListener('waiting', () => {
       updatePlayPauseButton(state.isPlaying, true);
+      if (el.npVideoBgVideo && !el.npVideoBgVideo.paused) { try { el.npVideoBgVideo.pause(); } catch (e) {} }
       if (!el.nativeAudio.paused) watchStall();
     });
     el.nativeAudio.addEventListener('stalled', () => { if (!el.nativeAudio.paused) watchStall(); });
@@ -6492,6 +6786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       sendStateToServer();
       updateMediaSession();
       if (typeof m3cStart === 'function') m3cStart();
+      syncNowPlayingVideo();
     });
 
     el.nativeAudio.addEventListener('pause', () => {
@@ -6513,10 +6808,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (audioEngine.suspendAudioContextDebounced) audioEngine.suspendAudioContextDebounced(5000);
         if (audioEngine.setAnalyserEnabled) audioEngine.setAnalyserEnabled(false);
       }
+      if (el.npVideoBgVideo && !el.npVideoBgVideo.paused) { try { el.npVideoBgVideo.pause(); } catch (e) {} }
       if (typeof applyM3Cover === 'function') applyM3Cover();
     });
 
     el.nativeAudio.addEventListener('ended', () => {
+      stopNpVideo();
       updatePlayPauseButton(false, false);
       if (state.sleepTimer && state.sleepTimer.mode === 'end') {
         state.sleepTimer = null;
@@ -10780,6 +11077,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (queue) queue.classList.toggle('hidden', state.drawerTab !== 'queue');
     if (el.btnToggleLyricsPanel) el.btnToggleLyricsPanel.classList.toggle('active', open && state.drawerTab === 'now');
     if (btnToggleQueue) btnToggleQueue.classList.toggle('active', open && state.drawerTab === 'queue');
+    syncNowPlayingVideo();
   }
   function openPanelDrawer(tab) {
     state.drawerTab = tab || state.drawerTab;
@@ -10803,6 +11101,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Escape' && state.isRightPanelOpen && !document.querySelector('.modal-backdrop:not(.hidden)')) closePanelDrawer();
   });
   syncDrawerUI();
+  if (el.btnNpVideoCover) el.btnNpVideoCover.addEventListener('click', () => setNpVideoEnabled(false));
+  if (el.btnNpVideoBackground) el.btnNpVideoBackground.addEventListener('click', () => setNpVideoEnabled(true));
+  applyNpVideoPreference();
 
   (function initPanelResize() {
     const edge = document.getElementById('panel-resize-edge');
@@ -12489,6 +12790,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } else if (key === 'blur_fx') {
         document.body.classList.toggle('no-blur', !newVal);
+      } else if (key === 'np_video') {
+        applyNpVideoPreference();
       } else if (key === 'light_thumbs') {
         document.querySelectorAll('.track-row-thumb[data-full], .quick-play-pill-img[data-full]').forEach(img => { img.src = listThumb(img.dataset.full) || img.dataset.full; });
       } else if (key === 'mesh_gradient') {
@@ -12923,6 +13226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.classList.toggle('no-wavy', on ? true : !isWavy);
     syncBgVideoPlayback();
     applyM3Cover();
+    syncNowPlayingVideo();
   }
   const btnBarWave = document.getElementById('btn-bar-wave');
   const barWaveOn = localStorage.getItem('canary_bar_wave') !== '0';

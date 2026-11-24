@@ -39,11 +39,13 @@ async function fastYouTubeStream(trackUrl, id) {
   if (!vid) return null;
   const started = Date.now();
   try {
-    const r = await ytFast.lookup(vid);
-    if (YTDLP_DEBUG) logger.log('info', `yt-fast ${vid}: ${r ? 'itag ' + r.itag : 'no stream'} in ${Date.now() - started} ms`);
-    if (!r) return null;
-    rememberStreamHeaders(r.url, r.headers);
-    return r.url;
+    // one player response holds the audio and the video; keep the video link for the background loop
+    const media = await ytFast.lookupMedia(vid);
+    if (media && media.video) rememberVideoCandidate(vid, media.video);
+    if (YTDLP_DEBUG) logger.log('info', `yt-fast ${vid}: ${media && media.audio ? 'itag ' + media.audio.itag : 'no stream'} in ${Date.now() - started} ms`);
+    if (!media || !media.audio) return null;
+    rememberStreamHeaders(media.audio.url, media.audio.headers);
+    return media.audio.url;
   } catch (e) {
     if (YTDLP_DEBUG) logger.log('info', `yt-fast ${vid} failed: ${e.message}`);
     return null;
@@ -296,6 +298,19 @@ function saveLibraryIndex() {
 
 const searchCache = new Map();
 const streamUrlCache = new Map();
+// Video links for the Now playing background loop. fastVideoCache is filled by the audio lookup above
+// (the same player response lists both); videoInfoCache holds the answers /api/video-info hands out,
+// keyed by video id and height cap. Signed googlevideo links expire, so neither outlives VIDEO_LINK_TTL.
+const fastVideoCache = new Map();
+const videoInfoCache = new Map();
+const VIDEO_LINK_TTL = 30 * 60 * 1000;
+const VIDEO_MISS_TTL = 10 * 60 * 1000;
+function rememberVideoCandidate(vid, video) {
+  if (!vid || !video || !video.url) return;
+  fastVideoCache.delete(vid);
+  fastVideoCache.set(vid, { timestamp: Date.now(), video });
+  while (fastVideoCache.size > 120) fastVideoCache.delete(fastVideoCache.keys().next().value);
+}
 const lyricsCache = new Map();
 const artistCache = new Map();
 const vibeCache = new Map();
@@ -1890,7 +1905,11 @@ async function prefetchTrack(trackUrl, trackId, platform, meta = null, priority 
         isLocal: false,
         streamUrl: streamUrl,
         isHls: isHls,
-        proxyUrl: withToken(`http://127.0.0.1:${PORT}/api/audio-proxy?url=${encodeURIComponent(streamUrl)}`)
+        proxyUrl: withToken(`http://127.0.0.1:${PORT}/api/audio-proxy?url=${encodeURIComponent(streamUrl)}`),
+        // the exact upload this audio came from, for the background video (same-source only)
+        sourceUrl: trackUrl,
+        sourceId: target.youtube ? (youtubeVideoId(trackUrl) || cleanId) : cleanId,
+        sourcePlatform: target.youtube ? 'youtube' : platform
       };
       streamUrlCache.set(cacheKey, { timestamp: Date.now(), data });
       if (cleanId && cleanId !== cacheKey) {
@@ -2441,6 +2460,10 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     cleanId = cleanTrackId(trackUrl.split('v=')[1].split('&')[0]);
   }
   const meta = { title, artist, duration, thumbnail };
+  // which upload the audio actually came from, so the background video uses the same one
+  let sourceUrl = trackUrl || (cleanId ? `https://www.youtube.com/watch?v=${cleanId}` : '');
+  let sourceId = cleanId;
+  let sourcePlatform = platform === 'ytmusic' ? 'youtube' : platform;
 
   const [cachedFile, downloadedName] = await Promise.all([
     cleanId ? findCachedFile(cleanId) : Promise.resolve(null),
@@ -2451,7 +2474,8 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     const data = {
       success: true,
       isLocal: true,
-      streamUrl: withToken(`http://127.0.0.1:${PORT}/api/local-track?id=${encodeURIComponent(cleanId)}`)
+      streamUrl: withToken(`http://127.0.0.1:${PORT}/api/local-track?id=${encodeURIComponent(cleanId)}`),
+      sourceUrl, sourceId, sourcePlatform
     };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(data));
@@ -2462,7 +2486,8 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
       success: true,
       isLocal: true,
       isDownload: true,
-      streamUrl: withToken(`http://127.0.0.1:${PORT}/api/downloaded-track?name=${encodeURIComponent(downloadedName)}`)
+      streamUrl: withToken(`http://127.0.0.1:${PORT}/api/downloaded-track?name=${encodeURIComponent(downloadedName)}`),
+      sourceUrl, sourceId, sourcePlatform
     };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(data));
@@ -2500,6 +2525,14 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
   try {
   const ytTarget = youtubeExtractTarget(trackUrl, cleanId, platform);
   trackUrl = ytTarget.url;
+  if (ytTarget.youtube) {
+    sourcePlatform = 'youtube';
+    sourceId = youtubeVideoId(trackUrl) || cleanId;
+    sourceUrl = trackUrl;
+  } else {
+    sourcePlatform = platform === 'ytmusic' ? 'youtube' : platform;
+    sourceUrl = trackUrl;
+  }
 
   if (STREAM_VIA_CACHE) {
     // the app gave up on this song (the listener skipped on): stop downloading it, and don't start fallbacks
@@ -2528,7 +2561,7 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     // settle the in-flight entry so concurrent lookups for this track don't wait forever,
     // and drop it so later prefetches don't mistake it for a cached stream URL
     const outcome = await findCachedFile(cleanId)
-      ? { success: true, isLocal: true, streamUrl: withToken(`http://127.0.0.1:${PORT}/api/local-track?id=${encodeURIComponent(cleanId)}`) }
+      ? { success: true, isLocal: true, streamUrl: withToken(`http://127.0.0.1:${PORT}/api/local-track?id=${encodeURIComponent(cleanId)}`), sourceUrl, sourceId, sourcePlatform }
       : { success: false, error: STREAM_FAILED };
     resolveLookup(outcome);
     if (cacheKey && streamUrlCache.get(cacheKey) === inFlightEntry) streamUrlCache.delete(cacheKey);
@@ -2560,7 +2593,12 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
         const found = streamSource.parseLookup(raw);
         streamUrl = found.url;
         rememberStreamHeaders(found.url, found.headers);
-        if (streamUrl) break;
+        if (streamUrl) {
+          sourceUrl = alt;
+          sourcePlatform = 'youtube';
+          sourceId = youtubeVideoId(alt) || cleanId;
+          break;
+        }
       } catch (e) {
         try { logger.error('Stream resolve alternative error: ' + alt, e); } catch (_) {}
       }
@@ -2574,7 +2612,12 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
       const scArgs = ['--no-config', '-g', '--no-warnings', '--no-playlist', '--prefer-free-formats', '-f', 'bestaudio/best', '--', sc];
       const scRaw = await executeYtDlp(scArgs, 15000, { key: `g:${sc}`, priority: 'play', reason: 'stream-soundcloud' });
       const scLines = scRaw.trim().split('\n').map(l => l.trim()).filter(l => l.startsWith('http'));
-      if (scLines.length > 0) streamUrl = scLines[0];
+      if (scLines.length > 0) {
+        streamUrl = scLines[0];
+        sourceUrl = sc;
+        sourcePlatform = 'soundcloud';
+        sourceId = '';
+      }
     } catch (e) {
       try { logger.error('Stream resolve fallback error: ' + (title || trackUrl), e); } catch (_) {}
     }
@@ -2597,7 +2640,9 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     isLocal: false,
     streamUrl: streamUrl,
     isHls: isHls,
-    proxyUrl: withToken(`http://127.0.0.1:${PORT}/api/audio-proxy?url=${encodeURIComponent(streamUrl)}`)
+    proxyUrl: withToken(`http://127.0.0.1:${PORT}/api/audio-proxy?url=${encodeURIComponent(streamUrl)}`),
+    // the exact upload this audio came from, for the background video (same-source only)
+    sourceUrl, sourceId, sourcePlatform
   };
 
   resolveLookup(data);
@@ -2617,6 +2662,132 @@ async function handleStreamInfo(req, res, trackUrl, trackId, platform = 'youtube
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(failure));
   }
+}
+
+function videoMiss(reason) {
+  return { success: true, video: null, reason };
+}
+
+// yt-dlp fallback for a video link: the fast player response is gone or its link no longer answers.
+// Video-only, and never above the requested height; a muxed format is a last resort (the video element
+// is muted, the song's audio keeps playing through its own stream).
+async function resolveVideoWithYtDlp(id, maxHeight) {
+  const cap = Math.max(360, Math.min(1080, Number(maxHeight) || 480));
+  try {
+    const args = [
+      '--no-config', ...streamSource.LOOKUP_PRINT_ARGS, '--no-warnings', '--no-playlist',
+      '-f', `bv*[height<=${cap}][ext=mp4]/bv*[height<=${cap}]/b[height<=${cap}]`,
+      '--extractor-args', YT_PLAYER_CLIENTS,
+      '--', `https://www.youtube.com/watch?v=${id}`
+    ];
+    // the song's audio is already playing: a video fallback must never hold up a song the listener plays
+    const raw = await executeYtDlp(args, 25000, { key: `video:${id}:${cap}`, priority: 'background', reason: 'video' });
+    const found = streamSource.parseLookup(raw);
+    if (!found.url || !isSafeMediaUrl(found.url)) return null;
+    return { url: found.url, headers: found.headers || { 'User-Agent': ytFast.VOS_UA }, kind: 'video' };
+  } catch (e) {
+    return null;
+  }
+}
+
+// The exact video of the upload that is playing (same-source only). Art tracks and audio-only uploads
+// answer video:null; the drawer then keeps the cover. Lyric videos are shown like any other video.
+async function handleVideoInfo(req, res, videoUrl, videoIdParam, platform = 'youtube', maxHeight = 480) {
+  const send = (data) => {
+    if (res.writableEnded || res.destroyed) return;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  };
+  // the drawer closed (or moved on) while a slow video fallback ran: don't keep yt-dlp busy for it
+  let gone = false;
+  res.on('close', () => { if (!res.writableEnded) gone = true; });
+  const cap = Math.max(360, Math.min(1080, Number(maxHeight) || 480));
+  const vid = ytFast.videoId(videoIdParam) || ytFast.videoId(videoUrl) || youtubeVideoId(videoUrl);
+  const isYouTube = platform === 'youtube' || platform === 'ytmusic' || !!youtubeVideoId(videoUrl);
+  if (!isYouTube || !/^[\w-]{11}$/.test(String(vid || ''))) return send(videoMiss('source'));
+
+  const key = `${vid}:${cap}`;
+  const cached = videoInfoCache.get(key);
+  if (cached && cached.data) {
+    const ttl = cached.data.video ? VIDEO_LINK_TTL : VIDEO_MISS_TTL;
+    if (Date.now() - cached.timestamp < ttl) return send(cached.data);
+    videoInfoCache.delete(key);
+  }
+
+  // prefetch and the drawer can ask for the same song together: share one lookup
+  const pendingKey = `${key}:pending`;
+  const pending = videoInfoCache.get(pendingKey);
+  if (pending && pending.promise) {
+    try { return send(await pending.promise); } catch (e) {}
+  }
+  let settle;
+  const shared = new Promise((resolve) => { settle = resolve; });
+  videoInfoCache.set(pendingKey, { promise: shared });
+
+  let data = null;
+  try {
+    let candidate = fastVideoCache.get(vid);
+    if (!candidate || Date.now() - candidate.timestamp > VIDEO_LINK_TTL) {
+      const fresh = await ytFast.lookupVideo(vid, cap).catch(() => null);
+      if (fresh) {
+        rememberVideoCandidate(vid, fresh);
+        candidate = fastVideoCache.get(vid);
+      }
+    }
+    let video = candidate && candidate.video;
+    if (video && (video.kind === 'art' || video.kind === 'audio')) {
+      data = videoMiss(video.kind);
+    } else if (video && video.live) {
+      data = videoMiss('live');
+    } else {
+      let fromFast = !!video;
+      if (!video && !gone) video = await resolveVideoWithYtDlp(vid, cap);
+      if (video) {
+        let ok = await ytFast.probe(video.url, video.headers);
+        if (!ok && fromFast) {
+          // the remembered fast link is dead: ask once more with a fresh player response
+          fastVideoCache.delete(vid);
+          const fresh = await ytFast.lookupVideo(vid, cap).catch(() => null);
+          if (fresh && fresh.kind !== 'art' && fresh.kind !== 'audio' && !fresh.live && await ytFast.probe(fresh.url, fresh.headers)) {
+            video = fresh;
+            rememberVideoCandidate(vid, fresh);
+            ok = true;
+          }
+        }
+        if (!ok && fromFast && !gone) {
+          video = await resolveVideoWithYtDlp(vid, cap);
+          if (video) ok = await ytFast.probe(video.url, video.headers);
+        }
+        if (!ok) video = null;
+      }
+      if (video && !isSafeMediaUrl(video.url)) video = null;
+      if (video) {
+        rememberStreamHeaders(video.url, video.headers);
+        data = {
+          success: true,
+          video: {
+            url: video.url,
+            proxyUrl: withToken(`http://127.0.0.1:${PORT}/api/audio-proxy?url=${encodeURIComponent(video.url)}`),
+            width: video.width || 0,
+            height: video.height || 0,
+            itag: video.itag || null,
+            mimeType: video.mimeType || '',
+            kind: video.kind || 'video'
+          }
+        };
+      } else {
+        data = videoMiss('none');
+      }
+    }
+  } catch (e) {
+    data = videoMiss('error');
+  }
+
+  videoInfoCache.delete(pendingKey);
+  if (data && data.reason !== 'error' && !gone) videoInfoCache.set(key, { timestamp: Date.now(), data });
+  trimCache(videoInfoCache, 200);
+  try { settle(data); } catch (e) {}
+  return send(data);
 }
 
 const artistInFlight = new Map();
@@ -2883,6 +3054,13 @@ async function handleDownloadedTrack(req, res, name) {
 function forgetStreamUrl(streamUrl) {
   for (const [key, entry] of streamUrlCache) {
     if (entry && entry.data && entry.data.streamUrl === streamUrl) streamUrlCache.delete(key);
+  }
+  // a video that now answers 403 must not be handed out again either
+  for (const [key, entry] of videoInfoCache) {
+    if (entry && entry.data && entry.data.video && entry.data.video.url === streamUrl) videoInfoCache.delete(key);
+  }
+  for (const [key, entry] of fastVideoCache) {
+    if (entry && entry.video && entry.video.url === streamUrl) fastVideoCache.delete(key);
   }
 }
 
@@ -3831,6 +4009,7 @@ const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/prefetch',
   '/api/check-cache',
   '/api/stream-info',
+  '/api/video-info',
   '/api/track-analysis',
   '/api/tools-status',
   '/api/tools-install',
@@ -6745,6 +6924,10 @@ const server = http.createServer(guardHandler(async (req, res) => {
     const duration = parsedUrl.query.duration || 0;
     const thumbnail = parsedUrl.query.thumbnail || '';
     return handleStreamInfo(req, res, trackUrl, trackId, platform, title, artist, duration, thumbnail, parsedUrl.query.fresh === '1');
+  }
+
+  if (parsedUrl.pathname === '/api/video-info') {
+    return handleVideoInfo(req, res, parsedUrl.query.url || '', parsedUrl.query.id || '', parsedUrl.query.platform || 'youtube', parsedUrl.query.maxHeight || 480);
   }
 
   if (parsedUrl.pathname === '/api/local-track') {

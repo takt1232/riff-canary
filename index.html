@@ -1394,6 +1394,15 @@
               <input type="range" class="pill-range" id="slider-crossfade" min="0" max="12" step="1" value="0">
               <div class="setting-hints"><span>Off</span><span>6s</span><span>12s</span></div>
             </div>
+            <div class="setting-item" id="setting-np-video-row">
+              <div class="setting-item-top" style="align-items: center;">
+                <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                  <span class="setting-name">Music video background</span>
+                  <span class="setting-hint">Loop the playing upload's video behind the Now playing panel; the cover is used when there is none</span>
+                </div>
+                <button type="button" class="effect-switch-btn active" data-adv="np_video" aria-label="Show a music video background"><span class="thumb"></span></button>
+              </div>
+            </div>
             <div class="setting-item" id="setting-audio-output-row" hidden>
               <div class="setting-item-top" style="align-items: center;">
                 <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
@@ -2018,6 +2027,11 @@
     </main>
 
     <aside class="right-panel lyrics-empty hidden" id="right-panel">
+      <div class="np-video-bg hidden" id="np-video-bg" aria-hidden="true">
+        <img class="np-video-bg-fallback" id="np-video-bg-fallback" alt="">
+        <video class="np-video-bg-video" id="np-video-bg-video" muted playsinline preload="none" crossorigin="anonymous" disablepictureinpicture aria-hidden="true" tabindex="-1"></video>
+        <div class="np-video-bg-scrim"></div>
+      </div>
       <div class="drawer-tabs" role="tablist">
         <button class="drawer-tab active" data-drawer-tab="now" role="tab">Now playing</button>
         <button class="drawer-tab" data-drawer-tab="queue" role="tab">Queue</button>
@@ -2028,6 +2042,14 @@
       <div class="drawer-pane" id="drawer-now">
       <div class="right-panel-header">
         <div class="right-panel-header-actions">
+          <div class="np-video-switch" id="np-video-switch" role="group" aria-label="Now playing visual">
+            <button class="np-video-switch-opt" id="btn-np-video-cover" type="button" title="Show cover" aria-label="Show cover" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"></path><rect x="2" y="14" width="4" height="7" rx="2"></rect><rect x="18" y="14" width="4" height="7" rx="2"></rect></svg>
+            </button>
+            <button class="np-video-switch-opt active" id="btn-np-video-background" type="button" title="Show video background" aria-label="Show video background" aria-pressed="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"></path></svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -3596,6 +3618,7 @@
   <script src="track-trim.js"></script>
   <script src="download-batch.js"></script>
   <script src="now-playing.js"></script>
+  <script src="np-video.js"></script>
   <script src="track-audio.js"></script>
   <script src="track-sort.js"></script>
   <script src="search-text.js"></script>

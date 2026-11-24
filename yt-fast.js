@@ -2,11 +2,15 @@
 // (the route the phone app uses, mobile/extract.js) instead of starting yt-dlp, which takes seconds per
 // song. YouTube doesn't hand out every song this way, so the link is checked before it's used and the
 // caller falls back to yt-dlp when this returns null.
+//
+// The same answer also lists the video's adaptive formats (video-only DASH links). They are kept here so
+// the Now playing drawer can use the song's video as a looping background without a second lookup.
 const https = require('https');
 
 const VOS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
 const VISITOR_MAX_AGE = 30 * 60e3;
 const PREFERRED_ITAGS = [251, 140, 250, 249, 139];
+const VIDEO_MAX_HEIGHT = 480;
 
 function request(url, { method = 'GET', headers = {}, body = null, timeout = 4000, maxBytes = 4 * 1024 * 1024, redirects = 3 } = {}) {
   return new Promise((resolve, reject) => {
@@ -62,9 +66,65 @@ function pickFormats(player) {
   return formats.sort((a, b) => rank(a) - rank(b));
 }
 
+// video-only formats with a plain link, best first. Resolution wins; at the same resolution H.264/MP4 is
+// preferred (hardware decoding, lighter than VP9/AV1), then VP9, then AV1.
+function pickVideoFormats(player, maxHeight = VIDEO_MAX_HEIGHT) {
+  const cap = Number(maxHeight);
+  const limit = Number.isFinite(cap) && cap > 0 ? cap : VIDEO_MAX_HEIGHT;
+  const codec = (f) => {
+    const m = String(f.mimeType || '');
+    if (/avc1/i.test(m)) return 0;
+    if (/vp0?9/i.test(m)) return 1;
+    if (/av01/i.test(m)) return 2;
+    return 3;
+  };
+  const all = [
+    ...((player && player.streamingData && player.streamingData.adaptiveFormats) || []),
+    // a few older videos only offer the muxed progressive formats (itag 18/22); the video is muted,
+    // so a muxed one is still usable when there is no adaptive video stream
+    ...((player && player.streamingData && player.streamingData.formats) || []),
+  ];
+  return all
+    .filter((f) => f && f.url && /^video\//.test(f.mimeType || '') && Number(f.height) > 0 && Number(f.height) <= limit)
+    .sort((a, b) => (Number(b.height) - Number(a.height)) || (codec(a) - codec(b)) || (Number(b.bitrate) - Number(a.bitrate)));
+}
+
+function videoCandidate(f) {
+  return {
+    url: f.url,
+    headers: { 'User-Agent': VOS_UA },
+    itag: f.itag,
+    width: Number(f.width) || 0,
+    height: Number(f.height) || 0,
+    fps: Number(f.fps) || 0,
+    mimeType: f.mimeType || '',
+    qualityLabel: f.qualityLabel || '',
+    contentLength: Number(f.contentLength) || 0,
+  };
+}
+
+// What kind of upload this is, as far as the player response can tell. YouTube has no "lyric video" flag:
+// these are ordinary uploads, so the title/description are matched instead. "lyric" is still shown; only
+// auto-generated art tracks and audio-only uploads are kept off the screen.
+function classifyVideoDetails(details) {
+  const d = details || {};
+  const title = String(d.title || '');
+  const desc = String(d.shortDescription || '');
+  const author = String(d.author || '');
+  if (/- Topic\s*$/i.test(author) || /^Provided to YouTube by\b/i.test(desc.trim())) return 'art';
+  if (/\(audio\)|\[audio\]|\bofficial audio\b|\baudio only\b|\bvisuali[sz]er\b/i.test(title)) return 'audio';
+  // VEVO's audio uploads say "Music video by ... performing ... (Audio)." even when the title is bare
+  if (/\bmusic video by\b/i.test(desc) && /\((?:official\s+)?audio\)/i.test(desc)) return 'audio';
+  // "lyrics" in a music video's description is usually a link or the printed lyrics, not the format:
+  // require it in the title or an explicit "official lyric video" line (best effort, never a filter)
+  if (/\blyrics?\b/i.test(title) || /\b(?:letra|paroles|testo)\b|歌詞|가사/i.test(title)) return 'lyric';
+  if (/\bofficial\s+lyric\s+video\b/i.test(desc)) return 'lyric';
+  return 'video';
+}
+
 const videoId = (u) => { const m = String(u || '').match(/(?:v=|youtu\.be\/|\/shorts\/|^)([\w-]{11})(?:[&?#]|$)/); return m ? m[1] : null; };
 
-async function lookup(id) {
+async function fetchPlayer(id) {
   if (!/^[\w-]{11}$/.test(String(id || ''))) return null;
   for (const force of [false, true]) {
     const v = await visitorId(force);
@@ -76,16 +136,68 @@ async function lookup(id) {
     const status = player && player.playabilityStatus && player.playabilityStatus.status;
     if (status === 'LOGIN_REQUIRED' && !force) continue;
     if (status !== 'OK') return null;
-    // YouTube lists links it then refuses (403) for some songs: check the first one answers before using it
-    for (const f of pickFormats(player).slice(0, 2)) {
-      try {
-        const probe = await request(f.url, { headers: { 'User-Agent': VOS_UA, Range: 'bytes=0-1023' }, timeout: 3000, maxBytes: 4096 });
-        if (probe.status === 200 || probe.status === 206) return { url: f.url, headers: { 'User-Agent': VOS_UA }, itag: f.itag };
-      } catch (_) {}
-    }
-    return null;
+    return player;
   }
   return null;
 }
 
-module.exports = { lookup, videoId, pickFormats, VOS_UA };
+async function pickAudioFormat(player) {
+  // YouTube lists links it then refuses (403) for some songs: check the first ones answer before using them
+  for (const f of pickFormats(player).slice(0, 2)) {
+    try {
+      const probe = await request(f.url, { headers: { 'User-Agent': VOS_UA, Range: 'bytes=0-1023' }, timeout: 3000, maxBytes: 4096 });
+      if (probe.status === 200 || probe.status === 206) return { url: f.url, headers: { 'User-Agent': VOS_UA }, itag: f.itag };
+    } catch (_) {}
+  }
+  return null;
+}
+
+// True when the URL answers a tiny range request. The proxy does the real fetching.
+async function probe(url, headers) {
+  try {
+    const r = await request(url, { headers: { ...(headers || {}), Range: 'bytes=0-1023' }, timeout: 3500, maxBytes: 4096 });
+    return r.status === 200 || r.status === 206;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Audio and video from one player response. Used when a song starts, so the video link is ready by the
+// time the drawer asks for it.
+async function lookupMedia(id) {
+  const player = await fetchPlayer(id);
+  if (!player) return null;
+  const details = player.videoDetails || {};
+  const audio = await pickAudioFormat(player);
+  const f = pickVideoFormats(player)[0];
+  let video = f ? videoCandidate(f) : null;
+  if (video) {
+    video.kind = classifyVideoDetails(details);
+    video.live = !!details.isLiveContent;
+  }
+  return { audio, video, details };
+}
+
+// Video only, without probing the audio (the song may already be playing).
+async function lookupVideo(id, maxHeight = VIDEO_MAX_HEIGHT) {
+  const player = await fetchPlayer(id);
+  if (!player) return null;
+  const f = pickVideoFormats(player, maxHeight)[0];
+  if (!f) return null;
+  const video = videoCandidate(f);
+  const details = player.videoDetails || {};
+  video.kind = classifyVideoDetails(details);
+  video.live = !!details.isLiveContent;
+  return video;
+}
+
+async function lookup(id) {
+  const media = await lookupMedia(id);
+  return media && media.audio;
+}
+
+module.exports = {
+  lookup, lookupMedia, lookupVideo, probe,
+  pickFormats, pickVideoFormats, classifyVideoDetails, videoCandidate,
+  videoId, VOS_UA, VIDEO_MAX_HEIGHT,
+};
