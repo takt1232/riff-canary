@@ -9,6 +9,15 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
 - Settings -> About now shows the exact installed build: version, build number and commit, on
   computers and phones. The small tag at the bottom of Settings shows the version too.
 
+## 1.4.0 — 2026-11-24
+
+### Added
+
+- Now playing can use the playing upload's video as a muted, looping background on computers. A
+  headphones/video switch in the Now playing header (and Settings → Playback) chooses between the
+  cover and the video background. Art tracks, audio-only uploads, SoundCloud and local files keep
+  the cover; the video always comes from the same upload as the audio.
+
 ## 1.3.19 — 2026-11-20
 
 ### Changed
