@@ -27,9 +27,12 @@ function request(url, { method = 'GET', headers = {}, body = null, timeout = 400
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {
-        size += c.length;
+        // Node gives Buffers; phones' fetch-based shim gives strings. Both must go through
+        // Buffer.concat below, so normalize here (otherwise the lookup threw on iOS/Android).
+        const chunk = Buffer.isBuffer(c) ? c : Buffer.from(c);
+        size += chunk.length;
         if (size > maxBytes) { req.destroy(new Error('response too large')); return; }
-        chunks.push(c);
+        chunks.push(chunk);
       });
       res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
       res.on('error', reject);

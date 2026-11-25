@@ -3427,7 +3427,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   function npVideoEnabled() {
-    return !isPhoneApp && getAdv('np_video', true);
+    // computers start with the video background on; phones opt in, so opening Now playing never
+    // spends data on a video nobody asked for. A choice made on the phone is remembered like any other.
+    return getAdv('np_video', !isPhoneApp);
   }
 
   function npVideoSource() {
@@ -3569,7 +3571,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     npVideo.attachedId = src.id;
-    v.crossOrigin = 'anonymous';
+    // phones load the direct stream: the in-app server has no socket to stream video through, and
+    // the bridge only swaps local-server URLs for files. googlevideo does not answer CORS, so the
+    // muted video asks for no CORS answer; the desktop proxy keeps same-origin media with CORS.
+    if (isPhoneApp) v.removeAttribute('crossorigin');
+    else v.crossOrigin = 'anonymous';
     v.muted = true;
     v.defaultMuted = true;
     v.volume = 0;
@@ -3619,7 +3625,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     npVideo.readyTimer = setTimeout(() => { if (token === npVideo.token && npVideo.attachedId === src.id && !layer.classList.contains('ready')) failNpVideo(src.id); }, 8000);
 
     v.preload = 'auto';
-    v.src = payload.video.proxyUrl || payload.video.url;
+    v.src = isPhoneApp ? (payload.video.url || payload.video.proxyUrl) : (payload.video.proxyUrl || payload.video.url);
     v.load();
 
     layer.classList.remove('hidden');
@@ -3650,7 +3656,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function applyNpVideoPreference() {
     const on = npVideoEnabled();
-    if (el.npVideoSwitch) el.npVideoSwitch.hidden = isPhoneApp;
     if (el.btnNpVideoCover) {
       el.btnNpVideoCover.classList.toggle('active', !on);
       el.btnNpVideoCover.setAttribute('aria-pressed', !on ? 'true' : 'false');
@@ -3660,13 +3665,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       el.btnNpVideoBackground.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
     document.querySelectorAll('.effect-switch-btn[data-adv="np_video"]').forEach((b) => b.classList.toggle('active', on));
-    const row = document.getElementById('setting-np-video-row');
-    if (row) row.hidden = isPhoneApp;
     syncNowPlayingVideo();
   }
 
   function setNpVideoEnabled(on) {
-    if (isPhoneApp) return;
     setAdv('np_video', !!on);
     npVideo.blocked.clear();
     applyNpVideoPreference();
@@ -5393,7 +5395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let tvVideoFallbackInFlight = false;
 
   function tvVideoAvailable() {
-    return !!(tvVideoInfo && tvVideoInfo.video && !isPhoneApp);
+    return !!(tvVideoInfo && tvVideoInfo.video);
   }
 
   function updateTvVideoMeta() {
@@ -5459,24 +5461,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (message) showToast(message, 'info');
   }
 
-  // Start at 720p on a connection that reports itself as slow; otherwise begin at 1080p and step down
-  // only if the video actually stutters.
+  // Computers start at 1080p (720p on a slow connection) and step down only if frames drop. Phones
+  // start at 720p, or 480p on Data Saver / 2G / 3G / a slow link, and step 720p down to 480p.
+  const TV_VIDEO_PHONE_MAX_HEIGHT = 720;
+  const TV_VIDEO_PHONE_LOW_HEIGHT = 480;
   function initialTvVideoMaxHeight() {
+    const normal = isPhoneApp ? TV_VIDEO_PHONE_MAX_HEIGHT : 1080;
+    const low = isPhoneApp ? TV_VIDEO_PHONE_LOW_HEIGHT : 720;
     try {
       const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      if (!conn) return 1080;
-      if (conn.saveData) return 720;
+      if (!conn) return normal;
+      if (conn.saveData) return low;
       const type = String(conn.effectiveType || '');
       const downlink = Number(conn.downlink);
-      if (type === 'slow-2g' || type === '2g' || type === '3g') return 720;
-      if (Number.isFinite(downlink) && downlink > 0 && downlink < 2.5) return 720;
+      if (type === 'slow-2g' || type === '2g' || type === '3g') return low;
+      if (Number.isFinite(downlink) && downlink > 0 && downlink < 2.5) return low;
     } catch (e) {}
-    return 1080;
+    return normal;
+  }
+
+  // The next step down for the current screen, or 0 when it is already at the floor.
+  function tvVideoLowerMaxHeight() {
+    const floor = isPhoneApp ? TV_VIDEO_PHONE_LOW_HEIGHT : 720;
+    return tvVideoMaxHeight > floor ? floor : 0;
   }
 
   function startTvVideoQualityMonitor() {
     if (tvVideoQualityTimer) { clearInterval(tvVideoQualityTimer); tvVideoQualityTimer = 0; }
-    if (tvVideoMaxHeight <= 720) return;
+    if (!tvVideoLowerMaxHeight()) return;
     tvVideoQualityTimer = setInterval(() => {
       if (tvVideoMode !== 'video' || !tvVideoAttachedId || tvVideoFallbackInFlight) return;
       const v = el.tvkVideo;
@@ -5491,11 +5503,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 5000);
   }
 
-  // Step the fullscreen video down to 720p without touching the audio. The current video keeps
+  // Step the fullscreen video down one quality without touching the audio. The current video keeps
   // playing while the smaller link is resolved, then the new stream takes over at the same position.
   async function tryTvVideoFallback(reason) {
     if (tvVideoFallbackInFlight) return true;
-    if (tvVideoMaxHeight <= 720) return false;
+    const lower = tvVideoLowerMaxHeight();
+    if (!lower) return false;
     const src = npVideoSource();
     if (!src) return false;
     tvVideoFallbackInFlight = true;
@@ -5504,7 +5517,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const timer = setTimeout(() => { try { controller.abort(); } catch (e) {} }, 12000);
     let payload = null;
     try {
-      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=720`;
+      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=${lower}`;
       const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/video-info?${q}`, { signal: controller.signal });
       payload = await res.json();
     } catch (e) {
@@ -5517,12 +5530,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const nowSource = npVideoSource();
     if (!nowSource || nowSource.id !== sourceId) return true;
     if (!payload || !payload.success || !payload.video) return false;
-    tvVideoMaxHeight = 720;
+    tvVideoMaxHeight = lower;
     tvVideoInfo = { id: sourceId, video: payload.video };
     tvVideoAttachedId = '';
     applyTvVideoUi();
     ensureTvVideo();
-    showToast('Switched to 720p for smoother video', 'info');
+    showToast(`Switched to ${lower}p for smoother video`, 'info');
     return true;
   }
 
@@ -5535,7 +5548,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     tvVideoAttachedId = info.id;
     tvVideoLastSeekAt = 0;
     updateTvVideoMeta();
-    v.crossOrigin = 'anonymous';
+    // direct streams on phones, the token-checked proxy on computers (see attachNpVideo)
+    if (isPhoneApp) v.removeAttribute('crossorigin');
+    else v.crossOrigin = 'anonymous';
     v.muted = true;
     v.defaultMuted = true;
     v.volume = 0;
@@ -5591,7 +5606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       })();
     }, 8000);
     v.preload = 'auto';
-    v.src = info.video.proxyUrl || info.video.url;
+    v.src = isPhoneApp ? (info.video.url || info.video.proxyUrl) : (info.video.proxyUrl || info.video.url);
     v.load();
     tvVideoSyncTimer = setInterval(syncTvVideoClock, 500);
   }
@@ -5666,7 +5681,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function checkTvVideo() {
-    if (!state.isTvKaraokeOpen || !el.tvkVideo || isPhoneApp) { tvVideoInfo = null; tvVideoStartInVideo = false; applyTvVideoUi(); return; }
+    if (!state.isTvKaraokeOpen || !el.tvkVideo) { tvVideoInfo = null; tvVideoStartInVideo = false; applyTvVideoUi(); return; }
     const src = npVideoSource();
     // on a track's first open in fullscreen this runs twice in a row (updateTvKaraokeMeta()
     // then openTvKaraoke() itself). Return before bumping the token, otherwise the second
@@ -13198,7 +13213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const advButtons = document.querySelectorAll('.effect-switch-btn[data-adv]');
   advButtons.forEach(btn => {
     const key = btn.dataset.adv;
-    const defaultVal = key === 'reduce_motion' ? systemPrefersReducedMotion() : (key === 'mesh_gradient' || key === 'glass_blur' || key === 'mesh_cover_color' || key === 'clip_fx') ? false : true;
+    const defaultVal = key === 'reduce_motion' ? systemPrefersReducedMotion() : (key === 'mesh_gradient' || key === 'glass_blur' || key === 'mesh_cover_color' || key === 'clip_fx') ? false : (key === 'np_video' ? !isPhoneApp : true);
     const currentVal = getAdv(key, defaultVal);
     btn.classList.toggle('active', currentVal);
 

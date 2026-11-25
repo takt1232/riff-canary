@@ -2,6 +2,17 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.5.3 — 2026-11-25
+
+### Added
+
+- Now playing's music video background and the fullscreen Lyrics/Video switch now work on Android and
+  iOS. They are off by default on phones; the cover/video switch in Now playing (or Settings →
+  Playback) turns them on. Fullscreen video starts at 720p, uses 480p on Data Saver, 2G/3G or a slow
+  connection, and steps 720p down to 480p if playback stutters.
+- On phones, fullscreen video plays behind the title and lyrics, like the Now playing background,
+  instead of replacing them. The video lookup also works in the phone app now.
+
 ## 1.5.2 — 2026-11-25
 
 ### Fixed
