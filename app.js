@@ -5379,6 +5379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // upload has a video.
   let tvVideoMode = 'lyrics';
   let tvVideoInfo = null; // { id, video } for the current audio source
+  let tvVideoStartInVideo = false; // the Now playing view was showing video when fullscreen opened
   let tvVideoCheckToken = 0;
   let tvVideoCheckingId = '';
   let tvVideoAbort = null;
@@ -5665,21 +5666,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function checkTvVideo() {
-    if (!state.isTvKaraokeOpen || !el.tvkVideo || isPhoneApp) { tvVideoInfo = null; applyTvVideoUi(); return; }
+    if (!state.isTvKaraokeOpen || !el.tvkVideo || isPhoneApp) { tvVideoInfo = null; tvVideoStartInVideo = false; applyTvVideoUi(); return; }
     const src = npVideoSource();
+    // on a track's first open in fullscreen this runs twice in a row (updateTvKaraokeMeta()
+    // then openTvKaraoke() itself). Return before bumping the token, otherwise the second
+    // call invalidates the request already in flight and its result is thrown away.
+    if (src && tvVideoAbort && tvVideoCheckingId === src.id) return;
     const token = ++tvVideoCheckToken;
     if (!src || navigator.onLine === false) {
       tvVideoInfo = null;
+      tvVideoStartInVideo = false;
       if (tvVideoMode === 'video') setTvVideoMode('lyrics');
       applyTvVideoUi();
       return;
     }
     if (tvVideoInfo && tvVideoInfo.id === src.id) {
-      applyTvVideoUi();
-      if (tvVideoMode === 'video') ensureTvVideo();
+      const startInVideo = tvVideoStartInVideo && !!tvVideoInfo.video;
+      tvVideoStartInVideo = false;
+      if (startInVideo) {
+        setTvVideoMode('video');
+      } else {
+        applyTvVideoUi();
+        if (tvVideoMode === 'video') ensureTvVideo();
+      }
       return;
     }
-    if (tvVideoAbort && tvVideoCheckingId === src.id) return;
     tvVideoCheckingId = src.id;
     detachTvVideo(true);
     tvVideoInfo = null;
@@ -5704,7 +5715,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     tvVideoInfo = payload && payload.success && payload.video
       ? { id: src.id, video: payload.video }
       : { id: src.id, video: null };
-    if (!tvVideoInfo.video && tvVideoMode === 'video') {
+    const startInVideo = tvVideoStartInVideo && !!tvVideoInfo.video;
+    tvVideoStartInVideo = false;
+    if (startInVideo && state.isTvKaraokeOpen) {
+      setTvVideoMode('video');
+    } else if (!tvVideoInfo.video && tvVideoMode === 'video') {
       setTvVideoMode('lyrics');
     } else {
       applyTvVideoUi();
@@ -5801,9 +5816,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!el.tvKaraoke || !el.lyricsContainer) return;
     if (state.isTvKaraokeOpen) return;
     state.isTvKaraokeOpen = true;
+    // the Now playing view's cover/video choice carries into fullscreen: video there means the
+    // fullscreen view starts on the video too, as soon as the upload is known to have one.
+    const startInVideo = npVideoEnabled() && !!npVideoSource();
     stopNpVideo();
     tvVideoMode = 'lyrics';
     tvVideoInfo = null;
+    tvVideoStartInVideo = startInVideo;
     tvVideoMaxHeight = initialTvVideoMaxHeight();
     tvVideoCheckToken++;
     if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
@@ -5875,6 +5894,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     tvVideoCheckToken++;
     if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
     tvVideoCheckingId = '';
+    tvVideoStartInVideo = false;
     setTvVideoMode('lyrics');
     tvVideoInfo = null;
     detachTvVideo(true);

@@ -2,6 +2,18 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.5.2 — 2026-11-25
+
+### Fixed
+
+- The fullscreen Lyrics/Video switch now appears on the first open for a song with a music video,
+  instead of only after closing and reopening fullscreen.
+
+### Changed
+
+- Opening fullscreen while Now playing is showing the video background now starts fullscreen in
+  video mode too. With Now playing set to the cover, fullscreen still opens on the lyrics.
+
 ## 1.5.0 — 2026-11-25
 
 ### Added
