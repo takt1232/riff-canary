@@ -2,6 +2,22 @@
 
 Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.5.0 — 2026-11-25
+
+### Added
+
+- Fullscreen karaoke now has a Lyrics/Video switch when the playing upload has a video. Video mode
+  shows the full music video, muted and synced to the song, with the existing playback controls in
+  a bottom overlay; tracks without video keep the lyrics view. Fullscreen video starts at 1080p when
+  the connection allows it and steps down to 720p automatically if frames drop, the stream is slow
+  to start, stalls, or errors. Slow and Data Saver connections start at 720p.
+
+### Changed
+
+- Fullscreen video no longer keeps the app or its visualizers rendering behind the view, and the
+  video sync corrects only large drift instead of nudging the playback rate constantly. Video-mode
+  controls no longer use live backdrop blur.
+
 ## 1.4.0 — 2026-11-24
 
 ### Added
