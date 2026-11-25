@@ -1,7 +1,7 @@
 // The portrait "Canvas" background in Now playing loops a short piece of the song's video. 8 s from
 // roughly a quarter in skips most intros; a video shorter than that loops whole. The loop is ambient and
-// independent of the song position. The fullscreen video mode uses driftPlan to keep a muted video in
-// step with the audio that is actually playing. No DOM here; test/np-video.test.js runs it.
+// independent of the song position. The fullscreen video mode uses seekPlan to keep a muted video on the
+// audio's clock without changing its playback rate every tick. No DOM here; test/np-video.test.js runs it.
 (function () {
   const SEEK_AT = 0.55;   // seconds of drift before the video is seeked instead of nudged
   const NUDGE_AT = 0.18;  // below this the video is left alone (a constant tiny correction looks like stutter)
@@ -24,6 +24,14 @@
     return { seek: false, rateScale: scale };
   }
 
+  // Fullscreen video: keep the picture on the audio clock without constant rate changes. Only a large
+  // drift is corrected with a seek; the caller adds a cooldown so frame pacing stays steady.
+  function seekPlan(videoTime, audioTime, threshold = 1.2) {
+    if (!Number.isFinite(videoTime) || !Number.isFinite(audioTime)) return { seek: false };
+    const at = Number.isFinite(threshold) ? threshold : 1.2;
+    return { seek: Math.abs(videoTime - audioTime) > at };
+  }
+
   function loopWindow(duration, seconds, startRatio) {
     const d = Number(duration);
     const wanted = Number(seconds) > 0 ? Number(seconds) : 8;
@@ -34,7 +42,7 @@
     return { start, end: start + len };
   }
 
-  const api = { driftPlan, loopWindow, SEEK_AT, NUDGE_AT, MAX_RATE };
+  const api = { driftPlan, seekPlan, loopWindow, SEEK_AT, NUDGE_AT, MAX_RATE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.CanaryNpVideo = api;
 })();

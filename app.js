@@ -2830,8 +2830,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   let lastDisplayedSec = -1;
 
   let lastFrameTime = 0;
+  function stopVisualizers() {
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+    if (audioEngine && audioEngine.setAnalyserEnabled) audioEngine.setAnalyserEnabled(false);
+  }
   function startVisualizers() {
     if (!state.isWindowVisible) return;
+    // the fullscreen video runs on its own compositor: no app canvases/FFT behind it
+    const tvEl = document.getElementById('tv-karaoke');
+    if (tvEl && tvEl.classList.contains('tv-video-mode')) return;
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
     const analyserNode = audioEngine && audioEngine.getAnalyserNode ? audioEngine.getAnalyserNode() : null;
@@ -3041,7 +3051,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (barBgCtx) clearBarBgVisualizer(barBgCtx);
       }
 
-      let scrubberCanvas = document.getElementById('squiggly-canvas');
+      // the fullscreen view has its own progress bar; don't redraw the hidden playbar scrubber
+      let scrubberCanvas = !state.isTvKaraokeOpen ? document.getElementById('squiggly-canvas') : null;
       if (scrubberCanvas && el.scrubberTrack) {
         const sCtx = scrubberCanvas.getContext('2d');
         const sw = cachedTrackWidth || (el.scrubberTrack ? el.scrubberTrack.clientWidth : 0);
@@ -5372,9 +5383,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   let tvVideoCheckingId = '';
   let tvVideoAbort = null;
   let tvVideoAttachedId = '';
+  let tvVideoLastSeekAt = 0;
   let tvVideoSyncTimer = 0;
   let tvVideoReadyTimer = 0;
   let tvVideoStallTimer = 0;
+  let tvVideoQualityTimer = 0;
+  let tvVideoMaxHeight = 1080;
+  let tvVideoFallbackInFlight = false;
 
   function tvVideoAvailable() {
     return !!(tvVideoInfo && tvVideoInfo.video && !isPhoneApp);
@@ -5412,6 +5427,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tvVideoSyncTimer) { clearInterval(tvVideoSyncTimer); tvVideoSyncTimer = 0; }
     if (tvVideoReadyTimer) { clearTimeout(tvVideoReadyTimer); tvVideoReadyTimer = 0; }
     if (tvVideoStallTimer) { clearTimeout(tvVideoStallTimer); tvVideoStallTimer = 0; }
+    if (tvVideoQualityTimer) { clearInterval(tvVideoQualityTimer); tvVideoQualityTimer = 0; }
     const v = el.tvkVideo;
     if (v) {
       v.oncanplay = null;
@@ -5442,6 +5458,73 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (message) showToast(message, 'info');
   }
 
+  // Start at 720p on a connection that reports itself as slow; otherwise begin at 1080p and step down
+  // only if the video actually stutters.
+  function initialTvVideoMaxHeight() {
+    try {
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (!conn) return 1080;
+      if (conn.saveData) return 720;
+      const type = String(conn.effectiveType || '');
+      const downlink = Number(conn.downlink);
+      if (type === 'slow-2g' || type === '2g' || type === '3g') return 720;
+      if (Number.isFinite(downlink) && downlink > 0 && downlink < 2.5) return 720;
+    } catch (e) {}
+    return 1080;
+  }
+
+  function startTvVideoQualityMonitor() {
+    if (tvVideoQualityTimer) { clearInterval(tvVideoQualityTimer); tvVideoQualityTimer = 0; }
+    if (tvVideoMaxHeight <= 720) return;
+    tvVideoQualityTimer = setInterval(() => {
+      if (tvVideoMode !== 'video' || !tvVideoAttachedId || tvVideoFallbackInFlight) return;
+      const v = el.tvkVideo;
+      if (!v || v.paused || v.readyState < 2) return;
+      let q = null;
+      try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
+      if (!q || !(q.totalVideoFrames >= 120)) return;
+      const droppedRatio = q.droppedVideoFrames / q.totalVideoFrames;
+      if (droppedRatio < 0.08) return;
+      if (tvVideoQualityTimer) { clearInterval(tvVideoQualityTimer); tvVideoQualityTimer = 0; }
+      tryTvVideoFallback('quality');
+    }, 5000);
+  }
+
+  // Step the fullscreen video down to 720p without touching the audio. The current video keeps
+  // playing while the smaller link is resolved, then the new stream takes over at the same position.
+  async function tryTvVideoFallback(reason) {
+    if (tvVideoFallbackInFlight) return true;
+    if (tvVideoMaxHeight <= 720) return false;
+    const src = npVideoSource();
+    if (!src) return false;
+    tvVideoFallbackInFlight = true;
+    const sourceId = src.id;
+    const controller = new AbortController();
+    const timer = setTimeout(() => { try { controller.abort(); } catch (e) {} }, 12000);
+    let payload = null;
+    try {
+      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=720`;
+      const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/video-info?${q}`, { signal: controller.signal });
+      payload = await res.json();
+    } catch (e) {
+      // keep the current quality; the caller decides whether to fall back to lyrics
+    } finally {
+      clearTimeout(timer);
+      tvVideoFallbackInFlight = false;
+    }
+    if (!state.isTvKaraokeOpen || tvVideoMode !== 'video') return true;
+    const nowSource = npVideoSource();
+    if (!nowSource || nowSource.id !== sourceId) return true;
+    if (!payload || !payload.success || !payload.video) return false;
+    tvVideoMaxHeight = 720;
+    tvVideoInfo = { id: sourceId, video: payload.video };
+    tvVideoAttachedId = '';
+    applyTvVideoUi();
+    ensureTvVideo();
+    showToast('Switched to 720p for smoother video', 'info');
+    return true;
+  }
+
   function ensureTvVideo() {
     if (tvVideoMode !== 'video' || !tvVideoAvailable() || !el.tvkVideo) return;
     const info = tvVideoInfo;
@@ -5449,6 +5532,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tvVideoAttachedId === info.id && v.currentSrc) { syncTvVideoClock(); return; }
     detachTvVideo(true);
     tvVideoAttachedId = info.id;
+    tvVideoLastSeekAt = 0;
     updateTvVideoMeta();
     v.crossOrigin = 'anonymous';
     v.muted = true;
@@ -5463,29 +5547,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         started = true;
         try {
           const at = el.nativeAudio.currentTime;
-          if (Number.isFinite(at) && at > 0.2) v.currentTime = at;
+          if (Number.isFinite(at) && at > 0.2) {
+            v.currentTime = at;
+            tvVideoLastSeekAt = Date.now();
+          }
         } catch (e) {}
       }
       v.playbackRate = el.nativeAudio.playbackRate || 1;
       if (el.tvKaraoke) el.tvKaraoke.classList.add('tv-video-ready');
       if (!el.nativeAudio.paused) v.play().catch(() => {});
+      startTvVideoQualityMonitor();
       syncTvVideoClock();
     };
-    const onError = () => { if (tvVideoAttachedId === info.id && tvVideoMode === 'video') tvVideoFailed('Video unavailable for this song'); };
+    const onError = () => {
+      if (tvVideoAttachedId !== info.id || tvVideoMode !== 'video') return;
+      (async () => {
+        const ok = await tryTvVideoFallback('error');
+        if (!ok && tvVideoAttachedId === info.id && tvVideoMode === 'video') tvVideoFailed('Video unavailable for this song');
+      })();
+    };
     v.oncanplay = onReady;
     v.onerror = onError;
     v.onwaiting = () => {
       if (tvVideoAttachedId !== info.id || tvVideoStallTimer) return;
       tvVideoStallTimer = setTimeout(() => {
         tvVideoStallTimer = 0;
-        if (tvVideoAttachedId === info.id && tvVideoMode === 'video' && !el.nativeAudio.paused) tvVideoFailed('Video unavailable for this song');
+        if (tvVideoAttachedId !== info.id || tvVideoMode !== 'video' || el.nativeAudio.paused) return;
+        (async () => {
+          const ok = await tryTvVideoFallback('stall');
+          if (!ok && tvVideoAttachedId === info.id && tvVideoMode === 'video') tvVideoFailed('Video unavailable for this song');
+        })();
       }, 8000);
     };
     v.onplaying = () => {
       if (tvVideoStallTimer) { clearTimeout(tvVideoStallTimer); tvVideoStallTimer = 0; }
     };
     tvVideoReadyTimer = setTimeout(() => {
-      if (tvVideoAttachedId === info.id && tvVideoMode === 'video' && !el.tvKaraoke.classList.contains('tv-video-ready')) tvVideoFailed('Video unavailable for this song');
+      if (tvVideoAttachedId !== info.id || tvVideoMode !== 'video' || el.tvKaraoke.classList.contains('tv-video-ready')) return;
+      (async () => {
+        const ok = await tryTvVideoFallback('timeout');
+        if (!ok && tvVideoAttachedId === info.id && tvVideoMode === 'video' && !el.tvKaraoke.classList.contains('tv-video-ready')) tvVideoFailed('Video unavailable for this song');
+      })();
     }, 8000);
     v.preload = 'auto';
     v.src = info.video.proxyUrl || info.video.url;
@@ -5504,20 +5606,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (v.readyState < 2 || v.seeking) return;
     if (v.ended) return; // keep the last frame; the song may outlast the video
     if (v.paused) v.play().catch(() => {});
-    const plan = (window.CanaryNpVideo && window.CanaryNpVideo.driftPlan) ? window.CanaryNpVideo.driftPlan : null;
     const rate = a.playbackRate || 1;
-    const p = plan ? plan(v.currentTime, a.currentTime) : { seek: false, rateScale: 1 };
-    if (p.seek) {
+    if (Math.abs(v.playbackRate - rate) > 0.005) { try { v.playbackRate = rate; } catch (e) {} }
+    // no constant rate nudging: a 1080p video's frame pacing is steadier when its rate stays put.
+    // Only a large drift is corrected, and never more often than every 1.5s.
+    const plan = (window.CanaryNpVideo && window.CanaryNpVideo.seekPlan)
+      ? window.CanaryNpVideo.seekPlan(v.currentTime, a.currentTime)
+      : { seek: Math.abs(v.currentTime - a.currentTime) > 1.2 };
+    if (plan.seek && Date.now() - tvVideoLastSeekAt > 1500) {
+      tvVideoLastSeekAt = Date.now();
       try { v.currentTime = a.currentTime; } catch (e) {}
-      try { v.playbackRate = rate; } catch (e) {}
-      return;
     }
-    const target = rate * p.rateScale;
-    if (Math.abs(v.playbackRate - target) > 0.005) { try { v.playbackRate = target; } catch (e) {} }
   }
 
   function seekTvVideo() {
     if (tvVideoMode !== 'video' || !tvVideoAttachedId || !el.tvkVideo || !el.nativeAudio) return;
+    tvVideoLastSeekAt = Date.now();
     try { el.tvkVideo.currentTime = el.nativeAudio.currentTime || 0; } catch (e) {}
   }
 
@@ -5535,6 +5639,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       applyTvVideoUi();
       updateTvVideoMeta();
       ensureTvVideo();
+      stopVisualizers();
+      document.querySelectorAll('#tv-bg video').forEach((v) => { try { v.pause(); } catch (e) {} });
       resetTvIdleTimer();
     } else {
       detachTvVideo(false);
@@ -5543,10 +5649,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (el.tvKaraoke) el.tvKaraoke.classList.remove('tv-video-mode');
       if (typeof resizeCanvases === 'function') requestAnimationFrame(resizeCanvases);
       syncTvLayout();
+      syncTvBanner();
       if (el.nativeAudio) {
         state.forceSnapLyrics = true;
         state.forceLyricsScroll = true;
         updateSyncedLyricsHighlight(el.nativeAudio.currentTime || 0);
+      }
+      if (audioEngine && audioEngine.setAnalyserEnabled) audioEngine.setAnalyserEnabled(true);
+      if ((state.isPlaying || isDraggingScrubber) && !animationFrameId) {
+        hasDrawnPausedFrame = false;
+        startVisualizers();
       }
       resetTvIdleTimer();
     }
@@ -5578,7 +5690,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const timer = setTimeout(() => { try { controller.abort(); } catch (e) {} }, 12000);
     let payload = null;
     try {
-      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=1080`;
+      const q = `id=${encodeURIComponent(src.id)}&url=${encodeURIComponent(src.url || '')}&platform=${encodeURIComponent(src.platform || 'youtube')}&maxHeight=${tvVideoMaxHeight}`;
       const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/video-info?${q}`, { signal: controller.signal });
       payload = await res.json();
     } catch (e) {
@@ -5692,6 +5804,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     stopNpVideo();
     tvVideoMode = 'lyrics';
     tvVideoInfo = null;
+    tvVideoMaxHeight = initialTvVideoMaxHeight();
     tvVideoCheckToken++;
     if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
     tvVideoCheckingId = '';
@@ -5706,6 +5819,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (el.tvKaraokeContent) {
       el.tvKaraokeContent.appendChild(el.lyricsContainer);
     }
+    document.body.classList.add('tv-open');
+    syncBgVideoPlayback();
     if (el.lyricsContainer) {
       el.lyricsContainer.style.paddingTop = '';
       el.lyricsContainer.style.paddingBottom = '';
@@ -5755,6 +5870,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function closeTvKaraoke() {
     if (!state.isTvKaraokeOpen || !el.tvKaraoke) return;
     state.isTvKaraokeOpen = false;
+    document.body.classList.remove('tv-open');
+    syncBgVideoPlayback();
     tvVideoCheckToken++;
     if (tvVideoAbort) { try { tvVideoAbort.abort(); } catch (e) {} tvVideoAbort = null; }
     tvVideoCheckingId = '';
@@ -5808,6 +5925,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(syncSidebarLyrics, 50);
     setTimeout(syncSidebarLyrics, 150);
     setTimeout(syncSidebarLyrics, 300);
+    if (typeof resizeCanvases === 'function') requestAnimationFrame(resizeCanvases);
+    if (audioEngine && audioEngine.setAnalyserEnabled) audioEngine.setAnalyserEnabled(true);
+    if ((state.isPlaying || isDraggingScrubber) && !animationFrameId) {
+      hasDrawnPausedFrame = false;
+      startVisualizers();
+    }
     syncNowPlayingVideo();
   }
 
@@ -12588,7 +12711,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function syncBgVideoPlayback() {
     const v = document.querySelector('#custom-bg video');
     if (!v) return;
-    const hidden = document.hidden || document.body.classList.contains('perf');
+    // the custom background is behind the opaque fullscreen view: don't decode it there too
+    const hidden = document.hidden || document.body.classList.contains('perf') || state.isTvKaraokeOpen;
     if (hidden) v.pause(); else v.play().catch(() => {});
   }
   document.addEventListener('visibilitychange', syncBgVideoPlayback);

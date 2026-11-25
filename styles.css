@@ -9424,6 +9424,25 @@ html.force-reduced-motion .tvk-liquid-layer { animation-play-state: paused !impo
 .tv-karaoke.tv-idle .tvk-video-meta { opacity: 0; pointer-events: none; }
 .tvk-video-bar, .tvk-mode-switch, .tvk-video-meta { transition: opacity 0.3s ease; }
 
+/* The fullscreen view is opaque: take the whole app out of the render tree, not just out of sight. */
+body.tv-open .app-layout,
+body.tv-open .playbar,
+body.tv-open .titlebar,
+body.tv-open #splash,
+body.tv-open #custom-bg,
+body.tv-open #cover-bg,
+body.tv-open #bg-mesh-a,
+body.tv-open #bg-mesh-b,
+body.tv-open #fx-root { display: none !important; }
+
+/* Live blur over a playing video is per-frame GPU work; the controls get a solid surface instead. */
+.tv-karaoke.tv-video-mode .tvk-mode-switch,
+.tv-karaoke.tv-video-mode .tv-karaoke-close {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: rgba(18, 18, 20, 0.8);
+}
+
 /* Download dialog: "Trim best part" */
 .dl-mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 999px; background: var(--md-sys-color-surface-container); margin-bottom: 14px; }
 .dl-mode-tab { height: 36px; border: none; border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); font-size: calc(13px * var(--font-scale, 1)); font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color 160ms ease, color 160ms ease; }

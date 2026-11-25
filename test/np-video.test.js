@@ -26,6 +26,14 @@ test('a video far out of step is seeked instead', () => {
   assert.equal(np.driftPlan(8, 10).seek, true);
 });
 
+test('fullscreen video only seeks after a large drift', () => {
+  assert.equal(np.seekPlan(10.5, 10).seek, false);
+  assert.equal(np.seekPlan(11.3, 10).seek, true);
+  assert.equal(np.seekPlan(8.7, 10).seek, true);
+  assert.equal(np.seekPlan(11.3, 10, 1.5).seek, false);
+  assert.equal(np.seekPlan(NaN, 10).seek, false);
+});
+
 test('the portrait background loops 8 seconds from a quarter into a long video', () => {
   assert.deepEqual(np.loopWindow(180), { start: 45, end: 53 });
   assert.deepEqual(np.loopWindow(180, 6, 0.5), { start: 90, end: 96 });
