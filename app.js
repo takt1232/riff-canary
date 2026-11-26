@@ -7353,6 +7353,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         : (state.currentTrack && Number.isFinite(state.currentTrack.duration) ? state.currentTrack.duration : 0);
       if (state.isTvKaraokeOpen) syncTvkProgress(cur, dur);
       if (miniLyricsShown()) updateMiniLyricsHighlight(cur);
+      // fullscreen video mode stops the rAF loop, so timeupdate is what keeps its lyrics moving
+      if (state.isTvKaraokeOpen) updateSyncedLyricsHighlight(cur);
 
       // Crossfade (off by default): fade the song out over its last X seconds while it keeps playing; the
       // 'ended' handler starts the next one, which fades in. This used to skip to the next song X seconds before

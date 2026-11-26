@@ -12,6 +12,8 @@ Notable changes to Canary. Versions follow [Semantic Versioning](https://semver.
   connection, and steps 720p down to 480p if playback stutters.
 - On phones, fullscreen video plays behind the title and lyrics, like the Now playing background,
   instead of replacing them. The video lookup also works in the phone app now.
+- Fullscreen lyrics keep following the song in video mode, instead of staying on the line that was
+  tapped.
 
 ## 1.5.2 — 2026-11-25
 
